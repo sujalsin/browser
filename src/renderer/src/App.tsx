@@ -6,20 +6,26 @@ import { Favicon } from './Favicon'
 import { Icon } from './Icon'
 import { dispatch, useBrowserState } from './useBrowserState'
 
-export function App() {
-  const state = useBrowserState()
-  if (!state) return null
-
+/** CSS variables shared by the window UI and the overlay. */
+export function themeStyle(state: UIState): CSSProperties {
   const space = state.spaces.find((s) => s.id === state.activeSpaceId) ?? state.spaces[0]
-  const style = {
+  return {
     '--space': space.color,
     '--sidebar-width': `${SIDEBAR_WIDTH}px`,
     '--gap': `${VIEW_GAP}px`,
   } as CSSProperties
+}
+
+export function App() {
+  const state = useBrowserState()
+  if (!state) return null
+  const hidden = !state.sidebarVisible && !state.htmlFullscreen
 
   return (
-    <div className={`window ${state.platform}`} style={style}>
+    <div className={`window ${state.platform}`} style={themeStyle(state)}>
       {state.sidebarVisible && !state.htmlFullscreen && <Sidebar state={state} />}
+      {/* Sidebar hidden: hovering the left edge slides it in over the page. */}
+      {hidden && <div className="edge-reveal" onMouseEnter={() => dispatch({ type: 'sidebar.peek', open: true })} />}
       <main className="content" style={{ left: state.sidebarVisible ? SIDEBAR_WIDTH : VIEW_GAP }}>
         <div className="drag-strip" />
         {!state.activeTabId && <EmptyState />}
@@ -29,7 +35,7 @@ export function App() {
   )
 }
 
-function Sidebar({ state }: { state: UIState }) {
+export function Sidebar({ state }: { state: UIState }) {
   const [showArchive, setShowArchive] = useState(false)
   const tabs = state.tabs.filter((t) => t.spaceId === state.activeSpaceId)
   const pinned = tabs.filter((t) => t.pinned)

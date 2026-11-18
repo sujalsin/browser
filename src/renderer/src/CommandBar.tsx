@@ -3,7 +3,7 @@ import type { ArchivedTab, Tab, UIState } from '../../shared/types'
 import { SEARCH_ENGINES, displayHost, resolveInput } from '../../shared/url'
 import { Favicon } from './Favicon'
 import { Icon } from './Icon'
-import { dispatch, useBrowserState } from './useBrowserState'
+import { dispatch } from './useBrowserState'
 
 type Result =
   | { kind: 'go'; input: string; url: string; isSearch: boolean }
@@ -49,9 +49,8 @@ function buildResults(state: UIState, input: string): Result[] {
   return results.slice(0, MAX_RESULTS)
 }
 
-export function CommandBar() {
-  const state = useBrowserState()
-  const bar = state?.commandBar
+export function CommandBar({ state }: { state: UIState }) {
+  const bar = state.commandBar
   const [input, setInput] = useState('')
   const [selected, setSelected] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -68,8 +67,8 @@ export function CommandBar() {
     })
   }, [openKey])
 
-  const results = useMemo(() => (state ? buildResults(state, input) : []), [state, input])
-  if (!state || !bar) return null
+  const results = useMemo(() => buildResults(state, input), [state, input])
+  if (!bar) return null
 
   const close = () => dispatch({ type: 'commandBar.close' })
   const run = (r: Result | undefined) => {

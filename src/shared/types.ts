@@ -62,6 +62,14 @@ export interface PersistedState {
   archive: ArchivedTab[]
   sidebarVisible: boolean
   searchEngine: SearchEngineId
+  settings: Settings
+}
+
+export interface Settings {
+  /** Unload background tabs after this many idle minutes. 0 = never. */
+  sleepAfterMinutes: number
+  /** Make sites (YouTube) send H.264 video, which Intel Macs decode in hardware. */
+  preferH264: boolean
 }
 
 /** What the UI receives. */
@@ -70,6 +78,8 @@ export interface UIState extends PersistedState {
   commandBar: CommandBarState | null
   htmlFullscreen: boolean
   platform: string
+  /** Sidebar temporarily shown over the page while it is hidden (hover at left edge). */
+  peek: boolean
 }
 
 export interface CommandBarState {
@@ -92,6 +102,8 @@ export type Action =
   | { type: 'commandBar.open'; mode: 'new' | 'edit' }
   | { type: 'commandBar.close' }
   | { type: 'sidebar.toggle' }
+  | { type: 'sidebar.peek'; open: boolean }
+  | { type: 'tab.sleep'; id: string }
   | { type: 'tabs.clearToday' }
   | { type: 'archive.restore'; index: number }
 

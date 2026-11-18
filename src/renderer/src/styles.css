@@ -552,3 +552,60 @@ kbd {
   color: var(--text-dim);
   white-space: nowrap;
 }
+
+/* ───────────── hidden sidebar: edge hover + peek ───────────── */
+
+.edge-reveal {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: var(--gap);
+  z-index: 5;
+}
+
+.overlay-root {
+  height: 100%;
+}
+
+.peek-panel {
+  position: absolute;
+  top: var(--gap);
+  left: var(--gap);
+  bottom: var(--gap);
+  width: calc(var(--sidebar-width) - var(--gap));
+  border-radius: 12px;
+  background: var(--frame);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22), 0 0 0 0.5px var(--panel-border);
+  overflow: hidden;
+  animation: peek-in 120ms ease-out;
+}
+
+.peek-panel .sidebar {
+  width: 100%;
+  padding-left: 6px;
+}
+
+@keyframes peek-in {
+  from {
+    transform: translateX(-12px);
+    opacity: 0;
+  }
+}
+
+.overlay-root:not(.darwin) .traffic-light-space {
+  width: 0;
+}
+
+/* Re-derive the frame color where --space is set, so each space can tint it. */
+.window,
+.overlay-root {
+  --frame: color-mix(in oklab, var(--space) 22%, var(--base));
+}
+
+@media (prefers-color-scheme: dark) {
+  .window,
+  .overlay-root {
+    --frame: color-mix(in oklab, var(--space) 18%, var(--base));
+  }
+}

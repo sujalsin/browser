@@ -19,6 +19,11 @@ export function defaultState(): PersistedState {
     archive: [],
     sidebarVisible: true,
     searchEngine: 'google',
+    settings: {
+      sleepAfterMinutes: 15,
+      // Intel Macs can't hardware-decode VP9/AV1, which YouTube prefers.
+      preferH264: process.platform === 'darwin' && process.arch === 'x64',
+    },
   }
 }
 
@@ -30,7 +35,8 @@ export function loadState(): PersistedState {
     if (parsed.version !== 1 || !Array.isArray(parsed.spaces) || !Array.isArray(parsed.tabs)) {
       throw new Error('unrecognized state file')
     }
-    const state = { ...defaultState(), ...parsed } as PersistedState
+    const defaults = defaultState()
+    const state = { ...defaults, ...parsed, settings: { ...defaults.settings, ...parsed.settings } } as PersistedState
     if (!state.spaces.some((s) => s.id === state.activeSpaceId)) state.activeSpaceId = state.spaces[0].id
     if (state.activeTabId && !state.tabs.some((t) => t.id === state.activeTabId)) state.activeTabId = null
     return state
@@ -54,7 +60,7 @@ let pending: PersistedState | null = null
 export function saveState(state: PersistedState): void {
   pending = state
   if (timer) return
-  timer = setTimeout(flushState, 400)
+  timer = setTimeout(flushState, 1500)
 }
 
 export function flushState(): void {

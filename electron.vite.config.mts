@@ -30,14 +30,21 @@ export default defineConfig({
   },
   preload: {
     build: {
-      // Our UI preload runs sandboxed, so it cannot require() from node_modules.
-      // Bundle everything into it.
+      // Preloads run sandboxed, so they cannot require() from node_modules.
+      // Bundle everything into them.
       externalizeDeps: false,
+      rollupOptions: {
+        input: {
+          index: resolve('src/preload/index.ts'),
+          h264: resolve('src/preload/h264.ts'),
+        },
+      },
     },
   },
   renderer: {
     root: resolve('src/renderer'),
     build: {
+      minify: true,
       rollupOptions: {
         input: resolve('src/renderer/index.html'),
       },

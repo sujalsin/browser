@@ -8,6 +8,7 @@ Arc's keyboard-first workflow, and Brave-style Shields — without the AI featur
 | Requirement | Decision |
 |---|---|
 | Machines | Intel Mac on macOS Tahoe (26) and Apple Silicon (M5) on Tahoe |
+| Performance | Must feel fast on the (slow) Intel Mac: lazy loading, tab sleeping, H.264 video, ad blocking |
 | Engine | Electron (Chromium), latest stable — currently 45.x, ships `darwin-x64` and `darwin-arm64` |
 | Must-have extension | **Bitwarden** (via `electron-chrome-extensions` + Chrome Web Store install) |
 | Tidy | Both: **Clear** (archive unpinned Today tabs) and **Tidy** (rule-based grouping into folders, no AI) |
@@ -66,8 +67,8 @@ latest snapshot and sends actions.
 | Spaces (color, icon, profile) | Space model + partition per profile; ⌃1–9 to switch | 1 |
 | Auto-archive Today tabs (12h/24h/7d/30d) | Timer on `lastActiveAt` | 1 |
 | **Tidy** (no AI) | Group by site into folders, merge duplicates, archive stale | 1 |
-| Sidebar auto-hide with hover reveal | Edge hot-zone | 1 |
-| Tab sleeping | Destroy views idle > N min (big win on Intel) | 1 |
+| Sidebar auto-hide with hover reveal | Edge hot-zone + overlay view | 0.5 ✅ |
+| Tab sleeping | Destroy views idle > N min, keep history (big win on Intel) | 0.5 ✅ |
 | Shields | See below | 2 |
 | History, downloads panel, find in page | SQLite + UI | 3 |
 | Bitwarden | Extension support + Web Store | 0 spike → 3 polish |
@@ -114,7 +115,8 @@ alongside → revisit the engine choice before investing more.
 
 ## Roadmap & definition of done
 
-- **Phase 0 — Skeleton** ✅ done: sidebar, tabs, command bar, pinned tabs, Clear + archive, session restore with lazy loading, shortcuts, context menus, permission prompts, downloads, load-error page, Chrome Web Store + extension support. **Still to verify on a Mac:** Bitwarden install, popup and autofill.
+- **Phase 0 — Skeleton** ✅ done: sidebar, tabs, command bar, pinned tabs, Clear + archive, session restore with lazy loading, shortcuts, context menus, permission prompts, downloads, load-error page, Chrome Web Store + extension support. Bitwarden verified: installs, background runs, button and popup work. **Still to verify on a Mac:** log in and autofill.
+- **Phase 0.5 — Performance** ✅ done (requirement: must feel fast on the Intel Mac): idle tab sleeping with history kept, H.264 preference for Intel, batched UI updates, minified UI bundle, window shown before extensions finish loading, sidebar hover-reveal when hidden.
 - **Phase 1 — The Arc core**: spaces, favorites, folders, DnD, auto-archive, Tidy, tab sleeping.
 - **Phase 2 — Shields.**
 - **Phase 3 — Daily driver**: history, downloads, find, permissions UI, Arc import, settings.

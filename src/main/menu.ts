@@ -22,6 +22,35 @@ export function installMenu(getShell: () => BrowserShell | null): void {
     click: withShell((s) => s.selectByIndex(n)),
   }))
 
+  const settings = getShell()?.settings
+  const sleepChoices: [number, string][] = [
+    [5, 'After 5 Minutes'],
+    [15, 'After 15 Minutes'],
+    [30, 'After 30 Minutes'],
+    [60, 'After 1 Hour'],
+    [0, 'Never'],
+  ]
+  const settingsMenu: MenuItemConstructorOptions = {
+    label: 'Performance',
+    submenu: [
+      {
+        label: 'Sleep Inactive Tabs',
+        submenu: sleepChoices.map(([minutes, label]) => ({
+          label,
+          type: 'radio' as const,
+          checked: settings?.sleepAfterMinutes === minutes,
+          click: withShell((s) => s.updateSettings({ sleepAfterMinutes: minutes })),
+        })),
+      },
+      {
+        label: 'Prefer H.264 Video (Less CPU on Intel Macs)',
+        type: 'checkbox',
+        checked: !!settings?.preferH264,
+        click: (item) => getShell()?.updateSettings({ preferH264: item.checked }),
+      },
+    ],
+  }
+
   const template: MenuItemConstructorOptions[] = [
     ...(isMac ? [{ role: 'appMenu' as const }] : []),
     {
@@ -106,6 +135,7 @@ export function installMenu(getShell: () => BrowserShell | null): void {
         },
       ],
     },
+    settingsMenu,
     { role: 'windowMenu' },
   ]
 

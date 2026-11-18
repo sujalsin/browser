@@ -2,7 +2,7 @@ import { app, ipcMain, session } from 'electron'
 import { existsSync } from 'node:fs'
 import { join, parse } from 'node:path'
 import { ElectronChromeExtensions } from 'electron-chrome-extensions'
-import { IPC, type Action } from '../shared/types'
+import { IPC, type Action, type PersistedState } from '../shared/types'
 import { setupExtensions } from './extensions'
 import { installMenu } from './menu'
 import { installPermissionHandlers } from './permissions'
@@ -18,10 +18,11 @@ app.userAgentFallback = app.userAgentFallback.replace(/\s(\S+)\/(\S+)/g, (token,
 )
 
 let shell: BrowserShell | null = null
+let extensionsReady = false
 const pendingUrls: string[] = []
 
 function openExternalUrl(url: string) {
-  if (shell) {
+  if (shell && extensionsReady) {
     shell.openTab(url)
     if (shell.win.isMinimized()) shell.win.restore()
     shell.win.focus()
@@ -67,24 +68,29 @@ function setupSession(partition: string) {
   })
 }
 
+const H264_PRELOAD_ID = 'prefer-h264'
+
+/** Turn the "prefer H.264 video" page script on or off for a session (applies to new page loads). */
+function applyH264(partition: string, on: boolean) {
+  const ses = session.fromPartition(partition)
+  const registered = ses.getPreloadScripts().some((p) => p.id === H264_PRELOAD_ID)
+  if (on && !registered) {
+    ses.registerPreloadScript({ id: H264_PRELOAD_ID, type: 'frame', filePath: join(__dirname, '../preload/h264.js') })
+  } else if (!on && registered) {
+    ses.unregisterPreloadScript(H264_PRELOAD_ID)
+  }
+}
+
 async function start() {
   const state = loadState()
+  const rendererUrl = process.env.ELECTRON_RENDERER_URL ?? `file://${join(__dirname, '../renderer/index.html')}`
 
   // Our own UI loads extension icons via crx:// in the default session.
   ElectronChromeExtensions.handleCRXProtocol(session.defaultSession)
-
   for (const space of state.spaces) {
     setupSession(space.partition)
-    try {
-      await setupExtensions(space.partition)
-    } catch (err) {
-      console.error('Extension setup failed:', err)
-    }
+    applyH264(space.partition, state.settings.preferH264)
   }
-
-  const rendererUrl = process.env.ELECTRON_RENDERER_URL ?? `file://${join(__dirname, '../renderer/index.html')}`
-
-  installMenu(() => shell)
 
   ipcMain.handle(IPC.getState, (event) => {
     if (!shell || !shell.isUIWebContents(event.sender)) return null
@@ -96,25 +102,46 @@ async function start() {
     shell.handleAction(action)
   })
 
-  shell = new BrowserShell(state, rendererUrl)
-  // Automated smoke tests drive the shell directly.
-  if (process.env.BROWSER_E2E) Object.assign(globalThis, { __shell: shell })
-  shell.win.on('closed', () => {
-    shell = null
-  })
+  const createShell = (s: PersistedState) => {
+    const created = new BrowserShell(s, rendererUrl)
+    created.onSettingsChanged = (settings) => {
+      for (const space of s.spaces) applyH264(space.partition, settings.preferH264)
+      installMenu(() => shell)
+    }
+    created.win.on('closed', () => {
+      if (shell === created) shell = null
+    })
+    // Automated smoke tests drive the shell directly.
+    if (process.env.BROWSER_E2E) Object.assign(globalThis, { __shell: created })
+    return created
+  }
 
+  // Show the window right away; pages wait until extensions (e.g. Bitwarden)
+  // are loaded so their content scripts are in place.
+  shell = createShell(state)
+  installMenu(() => shell)
+
+  for (const space of state.spaces) {
+    try {
+      await setupExtensions(space.partition)
+    } catch (err) {
+      console.error('Extension setup failed:', err)
+    }
+  }
+
+  if (!shell) return
+  shell.restoreActiveTab()
   // First run: open something useful.
   if (!state.tabs.length && !pendingUrls.length) {
     shell.openTab('https://chromewebstore.google.com/detail/bitwarden-password-manager/nngceckbapebfimnlniiiahkandclblb')
   }
+  extensionsReady = true
   for (const url of pendingUrls.splice(0)) shell.openTab(url)
 
   app.on('activate', () => {
     if (!shell) {
-      shell = new BrowserShell(loadState(), rendererUrl)
-      shell.win.on('closed', () => {
-        shell = null
-      })
+      shell = createShell(loadState())
+      shell.restoreActiveTab()
     }
   })
 }

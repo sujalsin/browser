@@ -13,6 +13,11 @@ npm install
 npm run dev
 ```
 
+## Daily use: build the app
+
+`npm run dev` is for working on the browser. It runs a dev server, unminified React and extra
+checks, so it is noticeably slower. On the Intel Mac especially, use a built app day to day.
+
 ## Build an app for your Macs
 
 ```bash
@@ -51,6 +56,21 @@ The Bitwarden button appears under the address pill in the sidebar.
 
 Pinned tabs work like Arc: ⌘W unloads them, and they return to their pinned URL.
 Right-click a tab in the sidebar for more options.
+
+When the sidebar is hidden (⌘S), move the pointer to the left edge of the window to show it
+over the page, like Arc.
+
+## Performance (built for a slow Intel Mac)
+
+- **Tabs load lazily.** After a restart only the tab you are on loads; the rest load when clicked.
+- **Idle tabs go to sleep** after 15 minutes (Performance menu → Sleep Inactive Tabs). Sleeping tabs
+  use no memory or CPU and keep their back/forward history. Tabs playing audio or with text you
+  typed are never put to sleep. Right-click a tab → Put Tab to Sleep to do it by hand.
+- **Prefer H.264 video** (Performance menu, on by default on Intel Macs). YouTube normally sends
+  VP9/AV1 video, which Intel Macs decode in software, using several CPU cores. H.264 is decoded by
+  the GPU instead. YouTube tops out at 1080p in this mode.
+- **Cheap UI updates.** The sidebar redraws at most every 50 ms, however busy the pages are.
+- Ad blocking (next phase) will be the biggest win: ads and trackers are most of a page's CPU use.
 
 ## Keep it secure
 

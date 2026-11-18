@@ -2,7 +2,7 @@ import { BrowserWindow, Menu, WebContentsView, clipboard, nativeTheme, shell as 
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { SIDEBAR_WIDTH, VIEW_GAP, VIEW_RADIUS } from '../shared/constants'
-import type { Action, ClosedTab, CommandBarState, PersistedState, Tab, TabRuntime, UIState } from '../shared/types'
+import type { Action, ClosedTab, CommandBarState, PersistedState, Settings, Tab, TabRuntime, UIState } from '../shared/types'
 import { IPC } from '../shared/types'
 import { displayHost, resolveInput } from '../shared/url'
 import { attachWebContextMenu } from './context-menu'
@@ -11,6 +11,11 @@ import { flushState, saveState } from './store'
 
 const MAX_CLOSED = 25
 const NEW_TAB_TITLE = 'New Tab'
+/** How often the sidebar UI is refreshed at most. Keeps busy pages cheap. */
+const EMIT_INTERVAL_MS = 50
+const SLEEP_CHECK_MS = 60_000
+/** The UI only needs recent archive entries; the full list stays on disk. */
+const ARCHIVE_IN_SNAPSHOT = 100
 
 interface OpenOptions {
   activate?: boolean
@@ -35,7 +40,16 @@ export class BrowserShell {
   private attachedTabId: string | null = null
   /** True while registering a view with the extension system (see createView). */
   registeringTab = false
-  private emitQueued = false
+  private emitTimer: NodeJS.Timeout | null = null
+  private lastEmit = 0
+  private peek = false
+  /** Back/forward history of sleeping tabs, so waking them keeps it. */
+  private sleptHistory = new Map<string, { entries: Electron.NavigationEntry[]; index: number }>()
+  /** Tabs the user has typed into since their last navigation: never put to sleep. */
+  private typedIn = new Set<string>()
+  private sleepTimer: NodeJS.Timeout
+  /** Called when settings change (menu checkmarks, session preloads). */
+  onSettingsChanged: (settings: Settings) => void = () => {}
 
   constructor(
     private state: PersistedState,
@@ -67,18 +81,25 @@ export class BrowserShell {
     this.win.on('enter-full-screen', () => this.layout())
     this.win.on('leave-full-screen', () => this.layout())
     this.win.on('close', () => {
-      this.persist()
+      saveState(this.state)
       flushState()
     })
     this.win.on('closed', () => {
+      clearInterval(this.sleepTimer)
+      if (this.emitTimer) clearTimeout(this.emitTimer)
       // Tab views are not owned by the window; tear them down explicitly.
       for (const id of [...this.views.keys()]) this.unload(id)
       if (this.overlay && !this.overlay.webContents.isDestroyed()) this.overlay.webContents.close()
     })
     this.win.webContents.on('did-finish-load', () => this.emitNow())
-
-    if (this.state.activeTabId) this.activate(this.state.activeTabId)
+    this.sleepTimer = setInterval(() => this.sleepIdleTabs(), SLEEP_CHECK_MS)
+    this.applyWindowButtons()
     this.layout()
+  }
+
+  /** Load the tab that was active last time. Called once extensions are ready. */
+  restoreActiveTab() {
+    if (this.state.activeTabId && !this.attachedTabId) this.activate(this.state.activeTabId)
   }
 
   // ───────────────────────────── state helpers ─────────────────────────────
@@ -126,31 +147,50 @@ export class BrowserShell {
   snapshot(): UIState {
     return {
       ...this.state,
+      archive: this.state.archive.slice(0, ARCHIVE_IN_SNAPSHOT),
       runtime: this.runtime,
       commandBar: this.commandBar,
       htmlFullscreen: this.htmlFullscreen,
       platform: process.platform,
+      peek: this.peek,
     }
   }
 
-  private persist() {
-    saveState(this.state)
+  get settings(): Settings {
+    return this.state.settings
   }
 
-  /** Coalesce many changes in one tick into a single UI update. */
-  private emit() {
-    this.persist()
-    if (this.emitQueued) return
-    this.emitQueued = true
-    setImmediate(() => this.emitNow())
+  updateSettings(patch: Partial<Settings>) {
+    Object.assign(this.state.settings, patch)
+    this.onSettingsChanged(this.state.settings)
+    this.emit()
+  }
+
+  private overlayVisible() {
+    return !!this.overlay && (!!this.commandBar || this.peek)
+  }
+
+  /**
+   * Schedule a UI refresh. Many events (loading, titles, audio) arrive in
+   * bursts, so updates are batched to at most one every EMIT_INTERVAL_MS.
+   * `persist: false` is for runtime-only changes that need no disk write.
+   */
+  private emit(persist = true) {
+    if (persist) saveState(this.state)
+    if (this.emitTimer) return
+    const wait = Math.max(0, this.lastEmit + EMIT_INTERVAL_MS - Date.now())
+    this.emitTimer = setTimeout(() => this.emitNow(), wait)
   }
 
   private emitNow() {
-    this.emitQueued = false
+    if (this.emitTimer) clearTimeout(this.emitTimer)
+    this.emitTimer = null
+    this.lastEmit = Date.now()
     if (this.win.isDestroyed()) return
     const snap = this.snapshot()
     this.win.webContents.send(IPC.state, snap)
-    if (this.overlay && !this.overlay.webContents.isDestroyed()) this.overlay.webContents.send(IPC.state, snap)
+    // The overlay is refreshed only while it is on screen (and when shown).
+    if (this.overlayVisible() && !this.overlay!.webContents.isDestroyed()) this.overlay!.webContents.send(IPC.state, snap)
   }
 
   // ───────────────────────────── layout ─────────────────────────────
@@ -176,7 +216,16 @@ export class BrowserShell {
         view.setBorderRadius(VIEW_RADIUS)
       }
     }
-    this.overlay?.setBounds({ x: 0, y: 0, width, height })
+    // Command bar: whole window. Peek: just the sidebar strip, so the page stays clickable.
+    this.overlay?.setBounds(
+      this.commandBar ? { x: 0, y: 0, width, height } : { x: 0, y: 0, width: Math.min(width, SIDEBAR_WIDTH + 16), height },
+    )
+  }
+
+  /** macOS traffic lights live in the sidebar; hide them when it is hidden. */
+  private applyWindowButtons() {
+    if (process.platform !== 'darwin' || this.win.isDestroyed()) return
+    this.win.setWindowButtonVisibility(this.state.sidebarVisible || this.peek)
   }
 
   /** Show the view for `id` (or nothing) in the content area. */
@@ -188,8 +237,8 @@ export class BrowserShell {
     const view = id ? this.views.get(id) : undefined
     if (view) {
       this.win.contentView.addChildView(view)
-      // Keep the command bar overlay on top.
-      if (this.commandBar && this.overlay) this.win.contentView.addChildView(this.overlay)
+      // Keep the overlay (command bar / peek sidebar) on top.
+      if (this.overlayVisible()) this.win.contentView.addChildView(this.overlay!)
     }
     this.layout()
   }
@@ -200,9 +249,17 @@ export class BrowserShell {
     const existing = this.views.get(tab.id)
     if (existing) return existing
     const view = this.createView(tab)
-    void view.webContents.loadURL(tab.url).catch(() => {
-      /* load errors show up as error pages; nothing to do here */
+    const history = this.sleptHistory.get(tab.id)
+    this.sleptHistory.delete(tab.id)
+    const load = () => view.webContents.loadURL(tab.url).catch(() => {
+      /* load errors are shown by the UI; nothing to do here */
     })
+    if (history?.entries.length) {
+      // Waking from sleep: bring back the whole back/forward history.
+      view.webContents.navigationHistory.restore(history).catch(load)
+    } else {
+      void load()
+    }
     return view
   }
 
@@ -258,7 +315,7 @@ export class BrowserShell {
           this.layout()
         }
       }
-      this.emit()
+      this.emit(false)
     })
     wc.on('did-fail-load', (_e, code, description, url, isMainFrame) => {
       // -3 = ERR_ABORTED (navigation replaced by another one); not a real failure.
@@ -272,25 +329,30 @@ export class BrowserShell {
       syncNav()
     })
     wc.on('did-navigate', (_e, url) => {
+      this.typedIn.delete(id)
       update({ url, favicon: undefined })
       syncNav()
+    })
+    wc.on('before-input-event', (_e, input) => {
+      // Typing (not shortcuts) means there may be unsaved text: don't sleep this tab.
+      if (input.type === 'keyDown' && !input.meta && !input.control && input.key.length === 1) this.typedIn.add(id)
     })
     wc.on('did-navigate-in-page', syncNav)
     wc.on('page-title-updated', (_e, title) => update({ title: title || NEW_TAB_TITLE }))
     wc.on('page-favicon-updated', (_e, favicons) => update({ favicon: favicons[0] }))
     wc.on('audio-state-changed', (e) => {
       if (rt()) rt().audible = e.audible
-      this.emit()
+      this.emit(false)
     })
     wc.on('enter-html-full-screen', () => {
       this.htmlFullscreen = true
       this.layout()
-      this.emit()
+      this.emit(false)
     })
     wc.on('leave-html-full-screen', () => {
       this.htmlFullscreen = false
       this.layout()
-      this.emit()
+      this.emit(false)
     })
     wc.on('render-process-gone', (_e, details) => {
       if (details.reason === 'clean-exit') return
@@ -335,14 +397,46 @@ export class BrowserShell {
     attachWebContextMenu(this, wc)
   }
 
-  /** Destroy a tab's page but keep it in the sidebar. */
-  private unload(id: string) {
+  /**
+   * Destroy a tab's page but keep it in the sidebar. With `keepHistory`, the
+   * back/forward list is remembered so waking the tab restores it.
+   */
+  private unload(id: string, keepHistory = false) {
     const view = this.views.get(id)
     if (!view) return
+    const wc = view.webContents
+    if (keepHistory && !wc.isDestroyed()) {
+      this.sleptHistory.set(id, { entries: wc.navigationHistory.getAllEntries(), index: wc.navigationHistory.getActiveIndex() })
+    } else {
+      this.sleptHistory.delete(id)
+    }
     if (this.attachedTabId === id && !this.win.isDestroyed()) this.attach(null)
     this.views.delete(id)
+    this.typedIn.delete(id)
     delete this.runtime[id]
-    if (!view.webContents.isDestroyed()) view.webContents.close()
+    if (!wc.isDestroyed()) wc.close()
+  }
+
+  /** Put a background tab to sleep: frees its memory and CPU; it reloads when selected. */
+  sleepTab(id: string) {
+    if (id === this.state.activeTabId || !this.views.has(id)) return
+    this.unload(id, true)
+    this.emit(false)
+  }
+
+  private sleepIdleTabs() {
+    const minutes = this.state.settings.sleepAfterMinutes
+    if (!minutes) return
+    const cutoff = Date.now() - minutes * 60_000
+    for (const [id, view] of this.views) {
+      const tab = this.tab(id)
+      const rt = this.runtime[id]
+      if (!tab || id === this.state.activeTabId || tab.lastActiveAt > cutoff) continue
+      // Keep tabs that are playing sound (music, calls) or have typed text.
+      if (rt?.audible || this.typedIn.has(id) || view.webContents.isCurrentlyAudible()) continue
+      this.unload(id, true)
+    }
+    this.emit(false)
   }
 
   // ───────────────────────────── tab operations ─────────────────────────────
@@ -384,6 +478,9 @@ export class BrowserShell {
   activate(id: string) {
     const tab = this.tab(id)
     if (!tab) return
+    // The tab we are leaving starts its idle clock now.
+    const prev = this.activeTab()
+    if (prev && prev.id !== id) prev.lastActiveAt = Date.now()
     tab.lastActiveAt = Date.now()
     this.state.activeTabId = id
     const view = this.ensureView(tab)
@@ -424,6 +521,7 @@ export class BrowserShell {
     this.closed.length = Math.min(this.closed.length, MAX_CLOSED)
     if (this.state.activeTabId === id) this.selectNeighbor(id, ordered)
     this.unload(id)
+    this.sleptHistory.delete(id)
     this.state.tabs = this.state.tabs.filter((t) => t.id !== id)
     this.emit()
   }
@@ -528,8 +626,40 @@ export class BrowserShell {
 
   toggleSidebar() {
     this.state.sidebarVisible = !this.state.sidebarVisible
+    if (this.peek) this.setPeek(false)
+    this.applyWindowButtons()
     this.layout()
     this.emit()
+  }
+
+  /** Arc-style: hovering the left edge shows the hidden sidebar over the page. */
+  setPeek(open: boolean) {
+    if (open && (this.state.sidebarVisible || this.htmlFullscreen || this.commandBar)) return
+    if (this.peek === open) return
+    this.peek = open
+    const overlay = this.ensureOverlay()
+    if (open) this.win.contentView.addChildView(overlay)
+    else if (!this.commandBar) this.win.contentView.removeChildView(overlay)
+    this.applyWindowButtons()
+    this.layout()
+    this.emitNow()
+  }
+
+  private ensureOverlay(): WebContentsView {
+    if (this.overlay) return this.overlay
+    const overlay = new WebContentsView({
+      webPreferences: {
+        preload: join(__dirname, '../preload/index.js'),
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
+    })
+    overlay.setBackgroundColor('#00000000')
+    void overlay.webContents.loadURL(`${this.rendererUrl}#overlay`)
+    overlay.webContents.on('did-finish-load', () => this.emitNow())
+    this.overlay = overlay
+    return overlay
   }
 
   copyUrl() {
@@ -542,32 +672,23 @@ export class BrowserShell {
   openCommandBar(mode: 'new' | 'edit') {
     const active = this.activeTab()
     if (mode === 'edit' && !active) mode = 'new'
+    this.peek = false
     this.commandBar = { mode, initialInput: mode === 'edit' && active ? active.url : '' }
-    if (!this.overlay) {
-      this.overlay = new WebContentsView({
-        webPreferences: {
-          preload: join(__dirname, '../preload/index.js'),
-          sandbox: true,
-          contextIsolation: true,
-          nodeIntegration: false,
-        },
-      })
-      this.overlay.setBackgroundColor('#00000000')
-      void this.overlay.webContents.loadURL(`${this.rendererUrl}#overlay`)
-      this.overlay.webContents.on('did-finish-load', () => this.emitNow())
-    }
-    this.win.contentView.addChildView(this.overlay)
+    const overlay = this.ensureOverlay()
+    this.win.contentView.addChildView(overlay)
+    this.applyWindowButtons()
     this.layout()
-    this.overlay.webContents.focus()
-    this.emit()
+    overlay.webContents.focus()
+    this.emitNow()
   }
 
   closeCommandBar() {
     if (!this.commandBar) return
     this.commandBar = null
     if (this.overlay) this.win.contentView.removeChildView(this.overlay)
+    this.layout()
     this.activeWebContents()?.focus()
-    this.emit()
+    this.emitNow()
   }
 
   // ───────────────────────────── sidebar tab menu ─────────────────────────────
@@ -591,11 +712,16 @@ export class BrowserShell {
           if (!wc || !rt) return
           rt.muted = !rt.muted
           wc.setAudioMuted(rt.muted)
-          this.emit()
+          this.emit(false)
         },
       },
       { label: 'Open in Default Browser', click: () => void electronShell.openExternal(tab.url) },
       { type: 'separator' },
+      {
+        label: 'Put Tab to Sleep',
+        enabled: loaded && id !== this.state.activeTabId,
+        click: () => this.sleepTab(id),
+      },
     ]
     if (tab.pinned) {
       items.push(
@@ -653,6 +779,10 @@ export class BrowserShell {
         return this.closeCommandBar()
       case 'sidebar.toggle':
         return this.toggleSidebar()
+      case 'sidebar.peek':
+        return this.setPeek(!!action.open)
+      case 'tab.sleep':
+        return this.sleepTab(action.id)
       case 'tabs.clearToday':
         return this.clearToday()
       case 'archive.restore':
