@@ -1,0 +1,32 @@
+appId: dev.local.browser
+productName: Browser
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**
+  - package.json
+npmRebuild: false
+protocols:
+  - name: Web URL
+    schemes: [http, https]
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+    - target: zip
+  # Ad-hoc signature: enough to run on your own Macs, no Apple developer account.
+  identity: '-'
+  hardenedRuntime: false
+  minimumSystemVersion: '12.0'
+  extendInfo:
+    NSCameraUsageDescription: A website you visit wants to use the camera.
+    NSMicrophoneUsageDescription: A website you visit wants to use the microphone.
+    NSLocationWhenInUseUsageDescription: A website you visit wants to know your location.
+    NSBluetoothAlwaysUsageDescription: A website you visit wants to use Bluetooth.
+    CFBundleDocumentTypes:
+      - CFBundleTypeName: HTML document
+        CFBundleTypeRole: Viewer
+        LSItemContentTypes: [public.html, public.xhtml]
+dmg:
+  artifactName: ${productName}-${version}-${arch}.${ext}
