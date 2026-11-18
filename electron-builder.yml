@@ -7,6 +7,7 @@ files:
   - out/**
   - package.json
 npmRebuild: false
+afterPack: build/after-pack.cjs
 protocols:
   - name: Web URL
     schemes: [http, https]
