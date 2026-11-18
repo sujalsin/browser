@@ -60,6 +60,22 @@ Right-click a tab in the sidebar for more options.
 When the sidebar is hidden (⌘S), move the pointer to the left edge of the window to show it
 over the page, like Arc.
 
+## Shields (ad and tracker blocking)
+
+Click the shield next to the address in the sidebar. The number is how many ads and trackers
+were blocked on the current page.
+
+- **Blocks ads and trackers** with the lists uBlock Origin and Brave use (EasyList, EasyPrivacy,
+  uBlock Origin filters, Peter Lowe's list) — about 187,000 rules — including hiding empty ad boxes
+  and fixing sites that fight ad blockers.
+- **Blocks cookie banners** (can be turned off).
+- **Removes tracking parameters** like `fbclid` and `gclid` from links you open.
+- **Upgrades to HTTPS** when a link is `http://`, and quietly falls back if the site doesn't support it.
+- **Turn Shields off for a site** if it breaks: shield → uncheck "Shields on for …". The page reloads.
+
+Filter lists download on first launch (a few seconds) and update once a day in the background.
+They are compiled on a background thread and cached, so they don't slow down startup.
+
 ## Performance (built for a slow Intel Mac)
 
 - **Tabs load lazily.** After a restart only the tab you are on loads; the rest load when clicked.
@@ -70,7 +86,7 @@ over the page, like Arc.
   VP9/AV1 video, which Intel Macs decode in software, using several CPU cores. H.264 is decoded by
   the GPU instead. YouTube tops out at 1080p in this mode.
 - **Cheap UI updates.** The sidebar redraws at most every 50 ms, however busy the pages are.
-- Ad blocking (next phase) will be the biggest win: ads and trackers are most of a page's CPU use.
+- **Shields** (above) are the biggest win: ads and trackers are most of a page's CPU use.
 
 ## Keep it secure
 

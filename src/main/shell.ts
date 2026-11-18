@@ -2,11 +2,12 @@ import { BrowserWindow, Menu, WebContentsView, clipboard, nativeTheme, shell as 
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { SIDEBAR_WIDTH, VIEW_GAP, VIEW_RADIUS } from '../shared/constants'
-import type { Action, ClosedTab, CommandBarState, PersistedState, Settings, Tab, TabRuntime, UIState } from '../shared/types'
+import type { Action, ClosedTab, CommandBarState, PersistedState, Settings, ShieldsSettings, Tab, TabRuntime, UIState } from '../shared/types'
 import { IPC } from '../shared/types'
 import { displayHost, resolveInput } from '../shared/url'
 import { attachWebContextMenu } from './context-menu'
 import { getExtensions, setExtensionsShell } from './extensions'
+import { Shields } from './shields'
 import { flushState, saveState } from './store'
 
 const MAX_CLOSED = 25
@@ -50,6 +51,26 @@ export class BrowserShell {
   private sleepTimer: NodeJS.Timeout
   /** Called when settings change (menu checkmarks, session preloads). */
   onSettingsChanged: (settings: Settings) => void = () => {}
+  /** Ad/tracker blocking; set by the app once created. */
+  shields: Shields | null = null
+
+  /** Wire Shields events (blocked counts, list status) into this window's UI. */
+  attachShields(shields: Shields) {
+    this.shields = shields
+    shields.onStatus = () => this.emit(false)
+    shields.onBlocked = (wcId) => {
+      for (const [id, view] of this.views) {
+        if (view.webContents.id === wcId) {
+          const rt = this.runtime[id]
+          if (rt) {
+            rt.blocked++
+            this.emit(false)
+          }
+          return
+        }
+      }
+    }
+  }
 
   constructor(
     private state: PersistedState,
@@ -153,11 +174,17 @@ export class BrowserShell {
       htmlFullscreen: this.htmlFullscreen,
       platform: process.platform,
       peek: this.peek,
+      shieldsStatus: this.shields?.getStatus() ?? { ready: false, updating: false },
+      activeShieldsOn: !!this.shields?.activeFor(this.activeTab()?.url),
     }
   }
 
   get settings(): Settings {
     return this.state.settings
+  }
+
+  get shieldsSettings(): ShieldsSettings {
+    return this.state.shields
   }
 
   updateSettings(patch: Partial<Settings>) {
@@ -276,7 +303,7 @@ export class BrowserShell {
     })
     view.setBackgroundColor('#ffffff')
     this.views.set(tab.id, view)
-    this.runtime[tab.id] = { loaded: true, loading: true, canGoBack: false, canGoForward: false, audible: false, muted: false }
+    this.runtime[tab.id] = { loaded: true, loading: true, canGoBack: false, canGoForward: false, audible: false, muted: false, blocked: 0 }
     this.wireView(tab.id, view)
     // Registering the first tab makes the extension system "select" it; that
     // must not steal focus from the tab the user is actually on.
@@ -317,9 +344,22 @@ export class BrowserShell {
       }
       this.emit(false)
     })
+    wc.on('did-start-navigation', (e) => {
+      // New page: reset its Shields counter.
+      if (e.isMainFrame && !e.isSameDocument && rt() && rt().blocked) {
+        rt().blocked = 0
+        this.emit(false)
+      }
+    })
     wc.on('did-fail-load', (_e, code, description, url, isMainFrame) => {
       // -3 = ERR_ABORTED (navigation replaced by another one); not a real failure.
       if (!isMainFrame || code === -3 || !rt()) return
+      // We guessed https:// and the site doesn't support it: retry over http.
+      const fallback = this.shields?.httpFallback(url, code)
+      if (fallback) {
+        void wc.loadURL(fallback).catch(() => {})
+        return
+      }
       rt().error = { code, description, url }
       update({ url, title: displayHost(url) })
       this.layout()
@@ -610,6 +650,8 @@ export class BrowserShell {
   navigate(input: string, mode: 'new' | 'edit') {
     const url = resolveInput(input, this.state.searchEngine)
     if (!url) return
+    // "example.com" was typed without a scheme: https is our guess, fall back to http if needed.
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(input.trim()) && url.startsWith('https://')) this.shields?.markUpgraded(url)
     const active = this.activeTab()
     if (mode === 'edit' && active) {
       const loaded = this.views.get(active.id)
@@ -752,6 +794,73 @@ export class BrowserShell {
     Menu.buildFromTemplate(items).popup({ window: this.win })
   }
 
+  // ───────────────────────────── Shields ─────────────────────────────
+
+  updateShields(patch: Partial<ShieldsSettings>, reloadActive = false) {
+    const prev = { ...this.state.shields }
+    Object.assign(this.state.shields, patch)
+    void this.shields?.settingsChanged(prev, this.state.shields)
+    this.emit()
+    if (reloadActive) this.activeWebContents()?.reload()
+  }
+
+  showShieldsMenu() {
+    const tab = this.activeTab()
+    const s = this.state.shields
+    const status = this.shields?.getStatus()
+    const site = tab ? Shields.siteOf(tab.url) : null
+    const siteOn = !!site && !s.disabledSites.includes(site)
+    const blocked = tab ? (this.runtime[tab.id]?.blocked ?? 0) : 0
+
+    const updated = status?.updatedAt ? `Filter lists updated ${timeAgo(status.updatedAt)}` : 'Filter lists not downloaded yet'
+    const items: Electron.MenuItemConstructorOptions[] = [
+      { label: s.enabled && siteOn ? `${blocked} blocked on this page` : 'Shields are off for this page', enabled: false },
+      { type: 'separator' },
+      {
+        label: site ? `Shields on for ${site}` : 'Shields on for this site',
+        type: 'checkbox',
+        checked: siteOn,
+        enabled: !!site && s.enabled,
+        click: () => {
+          if (!site) return
+          const disabledSites = siteOn ? [...s.disabledSites, site] : s.disabledSites.filter((d) => d !== site)
+          this.updateShields({ disabledSites }, true)
+        },
+      },
+      { type: 'separator' },
+      {
+        label: 'Block Cookie Banners',
+        type: 'checkbox',
+        checked: s.blockCookieBanners,
+        enabled: s.enabled,
+        click: (item) => this.updateShields({ blockCookieBanners: item.checked }),
+      },
+      {
+        label: 'Upgrade Connections to HTTPS',
+        type: 'checkbox',
+        checked: s.upgradeHttps,
+        click: (item) => this.updateShields({ upgradeHttps: item.checked }),
+      },
+      {
+        label: 'Remove Tracking Parameters from Links',
+        type: 'checkbox',
+        checked: s.stripTrackingParams,
+        click: (item) => this.updateShields({ stripTrackingParams: item.checked }),
+      },
+      { type: 'separator' },
+      {
+        label: 'Block Ads and Trackers Everywhere',
+        type: 'checkbox',
+        checked: s.enabled,
+        click: (item) => this.updateShields({ enabled: item.checked }, true),
+      },
+      { type: 'separator' },
+      { label: status?.updating ? 'Updating filter lists…' : status?.error ? `Update failed: ${status.error}` : updated, enabled: false },
+      { label: 'Update Filter Lists Now', enabled: !status?.updating, click: () => void this.shields?.refresh() },
+    ]
+    Menu.buildFromTemplate(items).popup({ window: this.win })
+  }
+
   // ───────────────────────────── IPC entry point ─────────────────────────────
 
   handleAction(action: Action) {
@@ -783,10 +892,21 @@ export class BrowserShell {
         return this.setPeek(!!action.open)
       case 'tab.sleep':
         return this.sleepTab(action.id)
+      case 'shields.menu':
+        return this.showShieldsMenu()
       case 'tabs.clearToday':
         return this.clearToday()
       case 'archive.restore':
         return this.restoreArchived(action.index)
     }
   }
+}
+
+function timeAgo(ts: number): string {
+  const min = Math.round((Date.now() - ts) / 60_000)
+  if (min < 1) return 'just now'
+  if (min < 60) return `${min} min ago`
+  const h = Math.round(min / 60)
+  if (h < 48) return `${h} hour${h === 1 ? '' : 's'} ago`
+  return `${Math.round(h / 24)} days ago`
 }

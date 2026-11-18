@@ -148,6 +148,53 @@ button {
   opacity: 0.35;
 }
 
+.url-row {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.url-row .url-pill {
+  flex: 1;
+  min-width: 0;
+}
+
+.shields-btn {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: var(--hover);
+  color: var(--space);
+  flex-shrink: 0;
+}
+
+.shields-btn:hover {
+  background: var(--press);
+}
+
+.shields-btn.off {
+  color: var(--text-dim);
+}
+
+.shields-count {
+  position: absolute;
+  top: 2px;
+  right: 1px;
+  min-width: 15px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--space);
+  color: white;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+}
+
 .url-pill {
   display: flex;
   align-items: center;

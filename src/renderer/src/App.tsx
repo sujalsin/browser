@@ -65,16 +65,19 @@ export function Sidebar({ state }: { state: UIState }) {
         </div>
       </header>
 
-      <button className="url-pill" title="Edit URL (⌘L)" onClick={() => dispatch({ type: 'commandBar.open', mode: active ? 'edit' : 'new' })}>
-        {active ? (
-          <>
-            {active.url.startsWith('https://') && <Icon name="lock" size={12} />}
-            <span className="url-text">{displayHost(active.url)}</span>
-          </>
-        ) : (
-          <span className="url-placeholder">Search or enter URL…</span>
-        )}
-      </button>
+      <div className="url-row">
+        <button className="url-pill" title="Edit URL (⌘L)" onClick={() => dispatch({ type: 'commandBar.open', mode: active ? 'edit' : 'new' })}>
+          {active ? (
+            <>
+              {active.url.startsWith('https://') && <Icon name="lock" size={12} />}
+              <span className="url-text">{displayHost(active.url)}</span>
+            </>
+          ) : (
+            <span className="url-placeholder">Search or enter URL…</span>
+          )}
+        </button>
+        <ShieldsButton state={state} />
+      </div>
 
       <div className="extensions-row">
         <browser-action-list partition={partition} alignment="bottom right" />
@@ -211,5 +214,22 @@ function LoadError({ error }: { error: NonNullable<TabRuntime['error']> }) {
         </button>
       </div>
     </div>
+  )
+}
+
+function ShieldsButton({ state }: { state: UIState }) {
+  const active = state.tabs.find((t) => t.id === state.activeTabId)
+  const blocked = active ? (state.runtime[active.id]?.blocked ?? 0) : 0
+  const on = state.activeShieldsOn
+  const title = !state.shieldsStatus.ready
+    ? 'Shields: downloading filter lists…'
+    : on
+      ? `Shields: ${blocked} blocked on this page`
+      : 'Shields are off for this site'
+  return (
+    <button className={`shields-btn ${on ? '' : 'off'}`} title={title} onClick={() => dispatch({ type: 'shields.menu' })}>
+      <Icon name={on ? 'shield' : 'shieldOff'} size={15} />
+      {on && blocked > 0 && <span className="shields-count">{blocked > 99 ? '99+' : blocked}</span>}
+    </button>
   )
 }

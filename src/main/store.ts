@@ -24,6 +24,13 @@ export function defaultState(): PersistedState {
       // Intel Macs can't hardware-decode VP9/AV1, which YouTube prefers.
       preferH264: process.platform === 'darwin' && process.arch === 'x64',
     },
+    shields: {
+      enabled: true,
+      disabledSites: [],
+      blockCookieBanners: true,
+      upgradeHttps: true,
+      stripTrackingParams: true,
+    },
   }
 }
 
@@ -36,7 +43,12 @@ export function loadState(): PersistedState {
       throw new Error('unrecognized state file')
     }
     const defaults = defaultState()
-    const state = { ...defaults, ...parsed, settings: { ...defaults.settings, ...parsed.settings } } as PersistedState
+    const state = {
+      ...defaults,
+      ...parsed,
+      settings: { ...defaults.settings, ...parsed.settings },
+      shields: { ...defaults.shields, ...parsed.shields },
+    } as PersistedState
     if (!state.spaces.some((s) => s.id === state.activeSpaceId)) state.activeSpaceId = state.spaces[0].id
     if (state.activeTabId && !state.tabs.some((t) => t.id === state.activeTabId)) state.activeTabId = null
     return state

@@ -7,6 +7,7 @@ import { setupExtensions } from './extensions'
 import { installMenu } from './menu'
 import { installPermissionHandlers } from './permissions'
 import { BrowserShell } from './shell'
+import { Shields } from './shields'
 import { flushState, loadState } from './store'
 
 app.setName('Browser')
@@ -85,11 +86,15 @@ async function start() {
   const state = loadState()
   const rendererUrl = process.env.ELECTRON_RENDERER_URL ?? `file://${join(__dirname, '../renderer/index.html')}`
 
+  // Shields read settings from whichever window state is current.
+  const shields = new Shields(() => (shell ? shell.shieldsSettings : state.shields))
+
   // Our own UI loads extension icons via crx:// in the default session.
   ElectronChromeExtensions.handleCRXProtocol(session.defaultSession)
   for (const space of state.spaces) {
     setupSession(space.partition)
     applyH264(space.partition, state.settings.preferH264)
+    shields.attach(session.fromPartition(space.partition))
   }
 
   ipcMain.handle(IPC.getState, (event) => {
@@ -104,6 +109,7 @@ async function start() {
 
   const createShell = (s: PersistedState) => {
     const created = new BrowserShell(s, rendererUrl)
+    created.attachShields(shields)
     created.onSettingsChanged = (settings) => {
       for (const space of s.spaces) applyH264(space.partition, settings.preferH264)
       installMenu(() => shell)
@@ -112,7 +118,7 @@ async function start() {
       if (shell === created) shell = null
     })
     // Automated smoke tests drive the shell directly.
-    if (process.env.BROWSER_E2E) Object.assign(globalThis, { __shell: created })
+    if (process.env.BROWSER_E2E) Object.assign(globalThis, { __shell: created, __shields: shields })
     return created
   }
 
@@ -121,13 +127,13 @@ async function start() {
   shell = createShell(state)
   installMenu(() => shell)
 
-  for (const space of state.spaces) {
-    try {
-      await setupExtensions(space.partition)
-    } catch (err) {
-      console.error('Extension setup failed:', err)
-    }
-  }
+  // Load extensions and the cached ad-block engine in parallel, before any page loads.
+  await Promise.all([
+    shields.init().catch((err) => console.error('Shields init failed:', err)),
+    ...state.spaces.map((space) =>
+      setupExtensions(space.partition).catch((err) => console.error('Extension setup failed:', err)),
+    ),
+  ])
 
   if (!shell) return
   shell.restoreActiveTab()

@@ -30,6 +30,8 @@ export interface TabRuntime {
   canGoForward: boolean
   audible: boolean
   muted: boolean
+  /** Ads/trackers blocked on the current page. */
+  blocked: number
   /** Set when the main frame failed to load (DNS error, offline, …). */
   error?: { code: number; description: string; url: string }
 }
@@ -63,6 +65,31 @@ export interface PersistedState {
   sidebarVisible: boolean
   searchEngine: SearchEngineId
   settings: Settings
+  shields: ShieldsSettings
+}
+
+/** Brave-style protections. */
+export interface ShieldsSettings {
+  /** Master switch for ad and tracker blocking. */
+  enabled: boolean
+  /** Sites (registrable domains, e.g. "example.com") where Shields are off. */
+  disabledSites: string[]
+  /** Also block cookie consent banners (adds cookie-notice filter lists). */
+  blockCookieBanners: boolean
+  /** Try https:// first for http:// links, falling back if it fails. */
+  upgradeHttps: boolean
+  /** Remove click-tracking parameters (fbclid, gclid, …) from links. */
+  stripTrackingParams: boolean
+}
+
+export interface ShieldsStatus {
+  /** Filter engine loaded and blocking. */
+  ready: boolean
+  /** When the filter lists were last downloaded (ms since epoch). */
+  updatedAt?: number
+  updating: boolean
+  error?: string
+  filterCount?: number
 }
 
 export interface Settings {
@@ -80,6 +107,9 @@ export interface UIState extends PersistedState {
   platform: string
   /** Sidebar temporarily shown over the page while it is hidden (hover at left edge). */
   peek: boolean
+  shieldsStatus: ShieldsStatus
+  /** Whether Shields are on for the active tab's site. */
+  activeShieldsOn: boolean
 }
 
 export interface CommandBarState {
@@ -104,6 +134,7 @@ export type Action =
   | { type: 'sidebar.toggle' }
   | { type: 'sidebar.peek'; open: boolean }
   | { type: 'tab.sleep'; id: string }
+  | { type: 'shields.menu' }
   | { type: 'tabs.clearToday' }
   | { type: 'archive.restore'; index: number }
 
