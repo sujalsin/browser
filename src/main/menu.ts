@@ -16,6 +16,19 @@ export function installMenu(getShell: () => BrowserShell | null): void {
     if (wc) fn(wc)
   })
 
+  const archiveChoices: [number, string][] = [
+    [12, 'After 12 Hours'],
+    [24, 'After 24 Hours'],
+    [24 * 7, 'After 7 Days'],
+    [24 * 30, 'After 30 Days'],
+    [0, 'Never'],
+  ]
+  const spaceNumberItems: MenuItemConstructorOptions[] = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({
+    label: `Space ${n}`,
+    accelerator: `Ctrl+${n}`,
+    click: withShell((s) => s.selectSpaceByIndex(n)),
+  }))
+
   const tabNumberItems: MenuItemConstructorOptions[] = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({
     label: n === 9 ? 'Last Tab' : `Tab ${n}`,
     accelerator: `CmdOrCtrl+${n}`,
@@ -110,7 +123,27 @@ export function installMenu(getShell: () => BrowserShell | null): void {
             if (tab) s.togglePin(tab.id)
           }),
         },
+        {
+          label: 'Add to / Remove from Favorites',
+          click: withShell((s) => {
+            const tab = s.activeTab()
+            if (tab) s.toggleFavorite(tab.id)
+          }),
+        },
+        { type: 'separator' },
+        { label: 'Tidy Tabs', accelerator: 'CmdOrCtrl+Shift+Y', click: withShell((s) => s.tidy()) },
         { label: 'Clear Today Tabs', accelerator: 'CmdOrCtrl+Shift+K', click: withShell((s) => s.clearToday()) },
+        {
+          label: 'Archive Today Tabs',
+          submenu: archiveChoices.map(([hours, label]) => ({
+            label,
+            type: 'radio' as const,
+            checked: settings?.archiveAfterHours === hours,
+            click: withShell((s) => s.updateSettings({ archiveAfterHours: hours })),
+          })),
+        },
+        { type: 'separator' },
+        { label: 'New Folder', click: withShell((s) => s.newFolder('pinned')) },
         { type: 'separator' },
         { label: 'Next Tab', accelerator: 'Ctrl+Tab', click: withShell((s) => s.cycle(1)) },
         { label: 'Previous Tab', accelerator: 'Ctrl+Shift+Tab', click: withShell((s) => s.cycle(-1)) },
@@ -118,6 +151,18 @@ export function installMenu(getShell: () => BrowserShell | null): void {
         { label: 'Previous Tab', accelerator: 'CmdOrCtrl+Alt+Up', visible: false, click: withShell((s) => s.cycle(-1)) },
         { type: 'separator' },
         ...tabNumberItems,
+      ],
+    },
+    {
+      label: 'Spaces',
+      submenu: [
+        { label: 'Next Space', accelerator: 'CmdOrCtrl+Alt+Right', click: withShell((s) => s.cycleSpace(1)) },
+        { label: 'Previous Space', accelerator: 'CmdOrCtrl+Alt+Left', click: withShell((s) => s.cycleSpace(-1)) },
+        { type: 'separator' },
+        ...spaceNumberItems,
+        { type: 'separator' },
+        { label: 'New Space', click: withShell((s) => void s.createSpace(false)) },
+        { label: 'New Space with Separate Profile', click: withShell((s) => void s.createSpace(true)) },
       ],
     },
     {

@@ -91,11 +91,21 @@ async function start() {
 
   // Our own UI loads extension icons via crx:// in the default session.
   ElectronChromeExtensions.handleCRXProtocol(session.defaultSession)
-  for (const space of state.spaces) {
-    setupSession(space.partition)
-    applyH264(space.partition, state.settings.preferH264)
-    shields.attach(session.fromPartition(space.partition))
+
+  // One-time setup per profile (session partition); several spaces can share one.
+  const prepared = new Map<string, Promise<void>>()
+  const prepareSession = (partition: string): Promise<void> => {
+    let ready = prepared.get(partition)
+    if (!ready) {
+      setupSession(partition)
+      applyH264(partition, (shell?.settings ?? state.settings).preferH264)
+      shields.attach(session.fromPartition(partition))
+      ready = setupExtensions(partition).catch((err) => console.error('Extension setup failed:', err))
+      prepared.set(partition, ready)
+    }
+    return ready
   }
+  const startupSessions = [...new Set(state.spaces.map((sp) => sp.partition))].map(prepareSession)
 
   ipcMain.handle(IPC.getState, (event) => {
     if (!shell || !shell.isUIWebContents(event.sender)) return null
@@ -110,8 +120,9 @@ async function start() {
   const createShell = (s: PersistedState) => {
     const created = new BrowserShell(s, rendererUrl)
     created.attachShields(shields)
+    created.prepareSession = prepareSession
     created.onSettingsChanged = (settings) => {
-      for (const space of s.spaces) applyH264(space.partition, settings.preferH264)
+      for (const partition of new Set(s.spaces.map((sp) => sp.partition))) applyH264(partition, settings.preferH264)
       installMenu(() => shell)
     }
     created.win.on('closed', () => {
@@ -128,12 +139,7 @@ async function start() {
   installMenu(() => shell)
 
   // Load extensions and the cached ad-block engine in parallel, before any page loads.
-  await Promise.all([
-    shields.init().catch((err) => console.error('Shields init failed:', err)),
-    ...state.spaces.map((space) =>
-      setupExtensions(space.partition).catch((err) => console.error('Extension setup failed:', err)),
-    ),
-  ])
+  await Promise.all([shields.init().catch((err) => console.error('Shields init failed:', err)), ...startupSessions])
 
   if (!shell) return
   shell.restoreActiveTab()

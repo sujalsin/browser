@@ -48,6 +48,9 @@ The Bitwarden button appears under the address pill in the sidebar.
 | ⇧⌘C | Copy URL |
 | ⌘D | Pin / unpin tab |
 | ⇧⌘K | Clear Today tabs (moves them to the archive) |
+| ⇧⌘Y | Tidy Today tabs |
+| ⌃1–⌃9 | Go to space N |
+| ⌘⌥← / ⌘⌥→ | Previous / next space |
 | ⌘1–⌘9 | Go to tab N (⌘9 = last tab) |
 | ⌃Tab / ⌃⇧Tab, ⌥⌘↓ / ⌥⌘↑ | Next / previous tab |
 | ⌘[ / ⌘] / ⌘R | Back / forward / reload |
@@ -59,6 +62,25 @@ Right-click a tab in the sidebar for more options.
 
 When the sidebar is hidden (⌘S), move the pointer to the left edge of the window to show it
 over the page, like Arc.
+
+## Arc features
+
+- **Spaces** — the dots at the bottom of the sidebar. ⌃1–⌃9 jumps to a space, ⌘⌥← / ⌘⌥→ (or a
+  two-finger swipe on the sidebar) moves between them. **+** makes a new space; choose
+  "Separate Profile" to give it its own logins, cookies and extensions (install Bitwarden again there).
+  Right-click a dot to rename it, change its color or delete it.
+- **Favorites** — the icon tiles at the top. Drag a tab up there, or right-click → Add to Favorites.
+  Spaces that share a profile share favorites.
+- **Pinned and Today** — like Arc. Drag tabs between them; pinned tabs and favorites remember their
+  URL and ⌘W only unloads them.
+- **Folders** — the folder button by the space name (or right-click a tab → Add to New Folder).
+  Drag tabs onto a folder to put them in it; click to collapse; double-click to rename.
+- **Tidy** (⇧⌘Y) — closes duplicate tabs and groups Today tabs from the same site into folders.
+  No AI. It never closes the tab you're on, and leaves folders you made alone.
+- **Clear** (⇧⌘K) — archives everything in Today.
+- **Auto-archive** — Today tabs you haven't opened in 12 hours are archived (Tabs → Archive Today
+  Tabs to change). Archived tabs are under the archive button and in ⌘T search.
+- **⌘T searches every space** and switches to the tab's space.
 
 ## Shields (ad and tracker blocking)
 

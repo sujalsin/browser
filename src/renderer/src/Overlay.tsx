@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
-import { Sidebar, themeStyle } from './App'
+import { themeStyle } from './App'
+import { Sidebar } from './Sidebar'
 import { CommandBar } from './CommandBar'
 import { dispatch, useBrowserState } from './useBrowserState'
 

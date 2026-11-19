@@ -1,12 +1,33 @@
-import { BrowserWindow, Menu, WebContentsView, clipboard, nativeTheme, shell as electronShell, type WebContents } from 'electron'
+import { BrowserWindow, Menu, WebContentsView, clipboard, dialog, nativeTheme, shell as electronShell, type WebContents } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { SIDEBAR_WIDTH, VIEW_GAP, VIEW_RADIUS } from '../shared/constants'
-import type { Action, ClosedTab, CommandBarState, PersistedState, Settings, ShieldsSettings, Tab, TabRuntime, UIState } from '../shared/types'
+import type { Action, ClosedTab, CommandBarState, ListRef, PersistedState, Settings, ShieldsSettings, Tab, TabRuntime, UIState } from '../shared/types'
 import { IPC } from '../shared/types'
 import { displayHost, resolveInput } from '../shared/url'
 import { attachWebContextMenu } from './context-menu'
 import { getExtensions, setExtensionsShell } from './extensions'
+import {
+  activeSpace,
+  addTab,
+  archiveTab,
+  clearToday,
+  createFolder,
+  favoritesOf,
+  folderById,
+  kindFor,
+  listArray,
+  locate,
+  moveItem,
+  removeFolder,
+  removeTab,
+  sidebarOrder,
+  spaceById,
+  staleTodayTabs,
+  tabById,
+  tidy,
+  type Location,
+} from './model'
 import { Shields } from './shields'
 import { flushState, saveState } from './store'
 
@@ -18,11 +39,23 @@ const SLEEP_CHECK_MS = 60_000
 /** The UI only needs recent archive entries; the full list stays on disk. */
 const ARCHIVE_IN_SNAPSHOT = 100
 
+/** Arc-like space colors. */
+export const SPACE_COLORS = [
+  { name: 'Purple', value: '#7c6cf2' },
+  { name: 'Blue', value: '#3b82f6' },
+  { name: 'Teal', value: '#14b8a6' },
+  { name: 'Green', value: '#22c55e' },
+  { name: 'Yellow', value: '#eab308' },
+  { name: 'Orange', value: '#f97316' },
+  { name: 'Red', value: '#ef4444' },
+  { name: 'Pink', value: '#ec4899' },
+  { name: 'Gray', value: '#64748b' },
+]
+
 interface OpenOptions {
   activate?: boolean
   /** Insert directly after this tab (links opened from a page). */
   afterTabId?: string
-  pinned?: boolean
 }
 
 /**
@@ -53,6 +86,10 @@ export class BrowserShell {
   onSettingsChanged: (settings: Settings) => void = () => {}
   /** Ad/tracker blocking; set by the app once created. */
   shields: Shields | null = null
+  /** Set up a new profile's session (permissions, Shields, extensions). Provided by the app. */
+  prepareSession: (partition: string) => Promise<void> = async () => {}
+  /** Space or folder name being edited inline in the sidebar. */
+  private editing: UIState['editing'] = null
 
   /** Wire Shields events (blocked counts, list status) into this window's UI. */
   attachShields(shields: Shields) {
@@ -130,17 +167,16 @@ export class BrowserShell {
   }
 
   private space() {
-    return this.state.spaces.find((s) => s.id === this.state.activeSpaceId) ?? this.state.spaces[0]
+    return activeSpace(this.state)
   }
 
-  /** Tabs of the active space in sidebar order: pinned first, then Today. */
-  private orderedTabs(): Tab[] {
-    const inSpace = this.state.tabs.filter((t) => t.spaceId === this.state.activeSpaceId)
-    return [...inSpace.filter((t) => t.pinned), ...inSpace.filter((t) => !t.pinned)]
+  /** The session (profile) a tab's page runs in. */
+  private partitionOf(tab: Tab): string {
+    return spaceById(this.state, tab.spaceId)?.partition ?? this.space().partition
   }
 
   private tab(id: string | null | undefined): Tab | undefined {
-    return id ? this.state.tabs.find((t) => t.id === id) : undefined
+    return tabById(this.state, id)
   }
 
   activeTab(): Tab | undefined {
@@ -176,6 +212,7 @@ export class BrowserShell {
       peek: this.peek,
       shieldsStatus: this.shields?.getStatus() ?? { ready: false, updating: false },
       activeShieldsOn: !!this.shields?.activeFor(this.activeTab()?.url),
+      editing: this.editing,
     }
   }
 
@@ -291,10 +328,11 @@ export class BrowserShell {
   }
 
   private createView(tab: Tab, adopt?: { webContents?: WebContents; webPreferences?: Electron.WebPreferences }): WebContentsView {
+    const partition = this.partitionOf(tab)
     const view = new WebContentsView({
       webPreferences: {
         ...adopt?.webPreferences,
-        partition: this.space().partition,
+        partition,
         sandbox: true,
         contextIsolation: true,
         nodeIntegration: false,
@@ -309,7 +347,7 @@ export class BrowserShell {
     // must not steal focus from the tab the user is actually on.
     this.registeringTab = true
     try {
-      getExtensions(this.space().partition).addTab(view.webContents, this.win)
+      getExtensions(partition).addTab(view.webContents, this.win)
     } finally {
       this.registeringTab = false
     }
@@ -411,7 +449,7 @@ export class BrowserShell {
           overrideBrowserWindowOptions: {
             width: 520,
             height: 680,
-            webPreferences: { partition: this.space().partition, sandbox: true, contextIsolation: true },
+            webPreferences: { partition: this.partitionOf(this.tab(id)!), sandbox: true, contextIsolation: true },
           },
         }
       }
@@ -465,6 +503,7 @@ export class BrowserShell {
   }
 
   private sleepIdleTabs() {
+    this.autoArchive()
     const minutes = this.state.settings.sleepAfterMinutes
     if (!minutes) return
     const cutoff = Date.now() - minutes * 60_000
@@ -481,29 +520,17 @@ export class BrowserShell {
 
   // ───────────────────────────── tab operations ─────────────────────────────
 
+  /** Create a tab in the active space (top of Today, or right after its opener). */
   private insertTab(url: string, opts: OpenOptions = {}): Tab {
     const now = Date.now()
-    const tab: Tab = {
-      id: randomUUID(),
-      spaceId: this.state.activeSpaceId,
-      url,
-      title: url,
-      pinned: !!opts.pinned,
-      pinnedUrl: opts.pinned ? url : undefined,
-      createdAt: now,
-      lastActiveAt: now,
-    }
-    const tabs = this.state.tabs
-    let index: number
-    const opener = opts.afterTabId ? tabs.findIndex((t) => t.id === opts.afterTabId) : -1
-    if (opener >= 0 && !tabs[opener].pinned) {
-      index = opener + 1
+    const tab: Tab = { id: randomUUID(), spaceId: this.state.activeSpaceId, url, title: url, kind: 'today', createdAt: now, lastActiveAt: now }
+    const opener = opts.afterTabId ? locate(this.state, opts.afterTabId) : null
+    if (opener && (opener.ref.type === 'today' || (opener.ref.type === 'folder' && kindFor(this.state, opener.ref) === 'today'))) {
+      addTab(this.state, tab, opener.spaceId, opener.ref, opener.index + 1)
     } else {
       // Arc puts new tabs at the top of Today.
-      index = tabs.findIndex((t) => t.spaceId === tab.spaceId && !t.pinned)
-      if (index < 0) index = tabs.length
+      addTab(this.state, tab, this.state.activeSpaceId, { type: 'today' }, 0)
     }
-    tabs.splice(index, 0, tab)
     this.emit()
     return tab
   }
@@ -518,23 +545,29 @@ export class BrowserShell {
   activate(id: string) {
     const tab = this.tab(id)
     if (!tab) return
+    // Selecting a tab from another space (command bar, archive, extension) switches to it.
+    const space = this.space()
+    const tabSpace = spaceById(this.state, tab.spaceId)
+    const visibleHere = tab.kind === 'favorite' ? tabSpace?.partition === space.partition : tab.spaceId === space.id
+    if (!visibleHere && tabSpace) this.state.activeSpaceId = tabSpace.id
     // The tab we are leaving starts its idle clock now.
     const prev = this.activeTab()
     if (prev && prev.id !== id) prev.lastActiveAt = Date.now()
     tab.lastActiveAt = Date.now()
     this.state.activeTabId = id
+    this.space().lastTabId = id
     const view = this.ensureView(tab)
     this.attach(id)
     if (!this.commandBar) view.webContents.focus()
-    getExtensions(this.space().partition).selectTab(view.webContents)
+    getExtensions(this.partitionOf(tab)).selectTab(view.webContents)
     this.emit()
   }
 
-  /** Arc behavior: ⌘W on a pinned tab unloads it and resets it to its pinned URL. */
+  /** Arc behavior: ⌘W on a pinned tab or favorite unloads it and resets it to its pinned URL. */
   closeTab(id: string) {
     const tab = this.tab(id)
     if (!tab) return
-    if (tab.pinned) {
+    if (tab.kind !== 'today') {
       if (!this.views.has(id)) return
       this.selectNeighbor(id)
       this.unload(id)
@@ -545,35 +578,41 @@ export class BrowserShell {
     this.removeTab(id)
   }
 
-  /** Remove a tab entirely (also used for pinned tabs from the context menu). */
-  removeTab(id: string) {
-    const tab = this.tab(id)
-    if (!tab) return
-    const ordered = this.orderedTabs()
+  private rememberClosed(tab: Tab, loc: Location | null) {
     this.closed.unshift({
       url: tab.url,
       title: tab.title,
       favicon: tab.favicon,
-      spaceId: tab.spaceId,
-      pinned: tab.pinned,
-      index: this.state.tabs.indexOf(tab),
+      spaceId: loc?.spaceId || tab.spaceId,
+      kind: tab.kind,
+      list: loc?.ref ?? { type: 'today' },
+      index: loc?.index ?? 0,
+      pinnedUrl: tab.pinnedUrl,
     })
     this.closed.length = Math.min(this.closed.length, MAX_CLOSED)
-    if (this.state.activeTabId === id) this.selectNeighbor(id, ordered)
+  }
+
+  /** Remove a tab entirely (also used for pinned tabs and favorites from the context menu). */
+  removeTab(id: string) {
+    const tab = this.tab(id)
+    if (!tab) return
+    if (this.state.activeTabId === id) this.selectNeighbor(id)
     this.unload(id)
-    this.sleptHistory.delete(id)
-    this.state.tabs = this.state.tabs.filter((t) => t.id !== id)
+    const loc = removeTab(this.state, id)
+    this.rememberClosed(tab, loc)
     this.emit()
   }
 
-  private selectNeighbor(id: string, ordered = this.orderedTabs()) {
+  private selectNeighbor(id: string) {
     if (this.state.activeTabId !== id) return
-    const i = ordered.findIndex((t) => t.id === id)
-    // Prefer the tab below, then above, then any loaded tab.
+    const ordered = sidebarOrder(this.state, this.state.activeSpaceId)
+    const i = ordered.indexOf(id)
+    // Prefer the tab below, then above.
     const next = ordered[i + 1] ?? ordered[i - 1]
-    if (next) this.activate(next.id)
+    if (next && next !== id) this.activate(next)
     else {
       this.state.activeTabId = null
+      this.space().lastTabId = null
       this.attach(null)
     }
   }
@@ -581,70 +620,113 @@ export class BrowserShell {
   reopenClosed() {
     const c = this.closed.shift()
     if (!c) return
-    const tab = this.insertTab(c.url, { pinned: c.pinned })
-    tab.title = c.title
-    tab.favicon = c.favicon
-    // Move it back to where it was.
-    this.state.tabs.splice(this.state.tabs.indexOf(tab), 1)
-    this.state.tabs.splice(Math.min(c.index, this.state.tabs.length), 0, tab)
+    const now = Date.now()
+    const tab: Tab = {
+      id: randomUUID(),
+      spaceId: c.spaceId,
+      url: c.url,
+      title: c.title,
+      favicon: c.favicon,
+      kind: c.kind,
+      pinnedUrl: c.pinnedUrl,
+      createdAt: now,
+      lastActiveAt: now,
+    }
+    // Back where it was if that place still exists, else top of Today.
+    const spaceId = spaceById(this.state, c.spaceId) ? c.spaceId : this.state.activeSpaceId
+    const ref = listArray(this.state, spaceId, c.list) ? c.list : { type: 'today' as const }
+    addTab(this.state, tab, spaceId, ref, c.list === ref ? c.index : 0)
     this.activate(tab.id)
+  }
+
+  /** Move a tab/folder (drag and drop). Lists are those of the active space. */
+  moveItem(id: string, to: ListRef, index: number) {
+    if (moveItem(this.state, id, this.state.activeSpaceId, to, index)) this.emit()
   }
 
   togglePin(id: string) {
     const tab = this.tab(id)
     if (!tab) return
-    tab.pinned = !tab.pinned
-    tab.pinnedUrl = tab.pinned ? tab.url : undefined
-    const tabs = this.state.tabs
-    tabs.splice(tabs.indexOf(tab), 1)
-    if (tab.pinned) {
-      tabs.push(tab) // end of the pinned section
-    } else {
-      const firstToday = tabs.findIndex((t) => t.spaceId === tab.spaceId && !t.pinned)
-      tabs.splice(firstToday < 0 ? tabs.length : firstToday, 0, tab)
+    const space = this.space()
+    if (tab.kind === 'today') moveItem(this.state, id, space.id, { type: 'pinned' }, space.pinned.length)
+    else moveItem(this.state, id, space.id, { type: 'today' }, 0)
+    this.emit()
+  }
+
+  toggleFavorite(id: string) {
+    const tab = this.tab(id)
+    if (!tab) return
+    const space = this.space()
+    if (tab.kind === 'favorite') moveItem(this.state, id, space.id, { type: 'today' }, 0)
+    else moveItem(this.state, id, space.id, { type: 'favorites' }, favoritesOf(this.state, space.partition).length)
+    this.emit()
+  }
+
+  /** Arc's "Clear": archive every Today tab in the current space. */
+  clearToday() {
+    const removed = clearToday(this.state, this.state.activeSpaceId, Date.now())
+    this.afterRemoving(removed)
+  }
+
+  /** Tabs were removed from the model: drop their pages and pick a new active tab if needed. */
+  private afterRemoving(ids: string[]) {
+    if (!ids.length) return
+    const activeGone = !!this.state.activeTabId && ids.includes(this.state.activeTabId)
+    for (const id of ids) {
+      this.unload(id)
+      this.sleptHistory.delete(id)
+    }
+    if (activeGone) {
+      this.state.activeTabId = null
+      this.space().lastTabId = null
+      const first = sidebarOrder(this.state, this.state.activeSpaceId)[0]
+      if (first) this.activate(first)
+      else this.attach(null)
     }
     this.emit()
   }
 
-  /** Arc's "Clear": archive every unpinned tab in the current space. */
-  clearToday() {
-    const now = Date.now()
-    const today = this.state.tabs.filter((t) => t.spaceId === this.state.activeSpaceId && !t.pinned)
-    if (!today.length) return
-    for (const t of today) {
-      this.state.archive.unshift({ url: t.url, title: t.title, favicon: t.favicon, spaceId: t.spaceId, archivedAt: now })
-      this.unload(t.id)
-    }
-    const ids = new Set(today.map((t) => t.id))
-    this.state.tabs = this.state.tabs.filter((t) => !ids.has(t.id))
-    if (this.state.activeTabId && ids.has(this.state.activeTabId)) {
-      this.state.activeTabId = null
-      const first = this.orderedTabs()[0]
-      if (first) this.activate(first.id)
-      else this.attach(null)
-    }
+  /** Tidy: close duplicates and group Today tabs by site (no AI). */
+  tidy() {
+    const result = tidy(this.state, this.state.activeSpaceId, this.state.activeTabId, () => randomUUID())
+    for (const { tab, loc } of result.closed) this.rememberClosed(tab, loc)
+    this.afterRemoving(result.closed.map((c) => c.tab.id))
     this.emit()
+  }
+
+  /** Archive Today tabs that haven't been used for a while (Arc's auto-archive). */
+  private autoArchive() {
+    const hours = this.state.settings.archiveAfterHours
+    if (!hours) return
+    const stale = staleTodayTabs(this.state, Date.now() - hours * 3_600_000).filter((id) => {
+      const rt = this.runtime[id]
+      return id !== this.state.activeTabId && !rt?.audible && !this.typedIn.has(id)
+    })
+    const now = Date.now()
+    for (const id of stale) archiveTab(this.state, id, now)
+    this.afterRemoving(stale)
   }
 
   restoreArchived(index: number) {
     const item = this.state.archive[index]
     if (!item) return
     this.state.archive.splice(index, 1)
+    if (spaceById(this.state, item.spaceId)) this.state.activeSpaceId = item.spaceId
     this.openTab(item.url)
   }
 
   selectByIndex(n: number) {
-    const ordered = this.orderedTabs()
-    const tab = n === 9 ? ordered[ordered.length - 1] : ordered[n - 1]
-    if (tab) this.activate(tab.id)
+    const ordered = sidebarOrder(this.state, this.state.activeSpaceId, false)
+    const id = n === 9 ? ordered[ordered.length - 1] : ordered[n - 1]
+    if (id) this.activate(id)
   }
 
   cycle(delta: 1 | -1) {
-    const ordered = this.orderedTabs()
+    const ordered = sidebarOrder(this.state, this.state.activeSpaceId, false)
     if (!ordered.length) return
-    const i = ordered.findIndex((t) => t.id === this.state.activeTabId)
+    const i = ordered.indexOf(this.state.activeTabId ?? '')
     const next = ordered[(i + delta + ordered.length) % ordered.length]
-    this.activate(next.id)
+    this.activate(next)
   }
 
   navigate(input: string, mode: 'new' | 'edit') {
@@ -664,6 +746,188 @@ export class BrowserShell {
     } else {
       this.openTab(url)
     }
+  }
+
+  // ───────────────────────────── spaces ─────────────────────────────
+
+  switchSpace(id: string) {
+    const space = spaceById(this.state, id)
+    if (!space || (id === this.state.activeSpaceId && this.attachedTabId)) return
+    const prev = this.activeTab()
+    if (prev) prev.lastActiveAt = Date.now()
+    this.state.activeSpaceId = id
+    const order = sidebarOrder(this.state, id)
+    const target = space.lastTabId && order.includes(space.lastTabId) ? space.lastTabId : null
+    if (target) {
+      this.activate(target)
+    } else {
+      // Empty space (or nothing selected yet): show its empty state.
+      this.state.activeTabId = null
+      this.attach(null)
+      this.emit()
+    }
+  }
+
+  cycleSpace(delta: 1 | -1) {
+    const spaces = this.state.spaces
+    const i = spaces.findIndex((s) => s.id === this.state.activeSpaceId)
+    this.switchSpace(spaces[(i + delta + spaces.length) % spaces.length].id)
+  }
+
+  selectSpaceByIndex(n: number) {
+    const space = this.state.spaces[n - 1]
+    if (space) this.switchSpace(space.id)
+  }
+
+  /** New space. With `separateProfile`, it gets its own cookies, logins and extensions. */
+  async createSpace(separateProfile: boolean) {
+    const id = randomUUID()
+    const partition = separateProfile ? `persist:space-${id}` : this.space().partition
+    if (separateProfile) await this.prepareSession(partition)
+    const used = new Set(this.state.spaces.map((s) => s.color))
+    const color = SPACE_COLORS.find((c) => !used.has(c.value))?.value ?? SPACE_COLORS[this.state.spaces.length % SPACE_COLORS.length].value
+    this.state.spaces.push({ id, name: separateProfile ? 'New Profile' : 'New Space', color, partition, pinned: [], today: [], lastTabId: null })
+    this.editing = { type: 'space', id }
+    this.switchSpace(id)
+    this.emit()
+  }
+
+  renameSpace(id: string, name: string) {
+    const space = spaceById(this.state, id)
+    if (space && name.trim()) space.name = name.trim().slice(0, 40)
+    if (this.editing?.id === id) this.editing = null
+    this.emit()
+  }
+
+  deleteSpace(id: string) {
+    const space = spaceById(this.state, id)
+    if (!space || this.state.spaces.length < 2) return
+    const doomed = sidebarOrder(this.state, id).filter((tabId) => this.tab(tabId)?.kind !== 'favorite')
+    for (const folderId of [...space.pinned, ...space.today]) removeFolder(this.state, folderId, true)
+    for (const tabId of doomed) {
+      this.unload(tabId)
+      removeTab(this.state, tabId)
+    }
+    this.state.spaces = this.state.spaces.filter((s) => s.id !== id)
+    // Favorites of this profile now belong to another space using it, or go away.
+    const heir = this.state.spaces.find((s) => s.partition === space.partition)
+    for (const favId of [...(this.state.favorites[space.partition] ?? [])]) {
+      const fav = this.tab(favId)
+      if (!fav || fav.spaceId !== id) continue
+      if (heir) fav.spaceId = heir.id
+      else {
+        this.unload(favId)
+        removeTab(this.state, favId)
+      }
+    }
+    if (!heir) delete this.state.favorites[space.partition]
+    if (this.state.activeSpaceId === id) this.switchSpace(this.state.spaces[0].id)
+    this.emit()
+  }
+
+  showSpaceMenu(id: string) {
+    const space = spaceById(this.state, id)
+    if (!space) return
+    const others = this.state.spaces.filter((s) => s.partition === space.partition).length - 1
+    const ownProfile = space.partition !== this.state.spaces[0].partition
+    const items: Electron.MenuItemConstructorOptions[] = [
+      { label: 'Rename Space', click: () => ((this.editing = { type: 'space', id }), this.emit(false)) },
+      {
+        label: 'Color',
+        submenu: SPACE_COLORS.map((c) => ({
+          label: c.name,
+          type: 'radio' as const,
+          checked: space.color === c.value,
+          click: () => {
+            space.color = c.value
+            this.emit()
+          },
+        })),
+      },
+      { type: 'separator' },
+      {
+        label: ownProfile ? (others ? `Separate profile (shared with ${others} other space${others > 1 ? 's' : ''})` : 'Separate profile (own logins)') : 'Main profile',
+        enabled: false,
+      },
+      { type: 'separator' },
+      {
+        label: 'Delete Space…',
+        enabled: this.state.spaces.length > 1,
+        click: async () => {
+          const { response } = await dialog.showMessageBox(this.win, {
+            type: 'warning',
+            buttons: ['Delete Space', 'Cancel'],
+            defaultId: 1,
+            cancelId: 1,
+            message: `Delete “${space.name}”?`,
+            detail: 'Its pinned and Today tabs will be closed. This cannot be undone.',
+          })
+          if (response === 0) this.deleteSpace(id)
+        },
+      },
+    ]
+    Menu.buildFromTemplate(items).popup({ window: this.win })
+  }
+
+  showAddSpaceMenu() {
+    Menu.buildFromTemplate([
+      { label: 'New Space', click: () => void this.createSpace(false) },
+      { label: 'New Space with Separate Profile', sublabel: 'Own cookies, logins and extensions', click: () => void this.createSpace(true) },
+    ]).popup({ window: this.win })
+  }
+
+  // ───────────────────────────── folders ─────────────────────────────
+
+  newFolder(list: 'pinned' | 'today', withTab?: string) {
+    const id = randomUUID()
+    const space = this.space()
+    createFolder(this.state, space.id, { type: list }, 0, 'New Folder', id, withTab ? [withTab] : [])
+    this.editing = { type: 'folder', id }
+    this.emit()
+  }
+
+  toggleFolder(id: string) {
+    const folder = folderById(this.state, id)
+    if (!folder) return
+    folder.collapsed = !folder.collapsed
+    this.emit()
+  }
+
+  renameFolder(id: string, name: string) {
+    const folder = folderById(this.state, id)
+    if (folder && name.trim()) {
+      folder.name = name.trim().slice(0, 60)
+      folder.auto = undefined // renamed by you: Tidy keeps it
+    }
+    if (this.editing?.id === id) this.editing = null
+    this.emit()
+  }
+
+  showFolderMenu(id: string) {
+    const folder = folderById(this.state, id)
+    if (!folder) return
+    Menu.buildFromTemplate([
+      { label: 'Rename Folder', click: () => ((this.editing = { type: 'folder', id }), this.emit(false)) },
+      { label: folder.collapsed ? 'Expand' : 'Collapse', click: () => this.toggleFolder(id) },
+      { type: 'separator' },
+      {
+        label: 'Ungroup',
+        click: () => {
+          removeFolder(this.state, id, true)
+          this.emit()
+        },
+      },
+      {
+        label: `Close Folder and ${folder.children.length} Tab${folder.children.length === 1 ? '' : 's'}`,
+        click: () => {
+          for (const tabId of folder.children) {
+            const tab = this.tab(tabId)
+            if (tab) this.rememberClosed(tab, locate(this.state, tabId))
+          }
+          this.afterRemoving(removeFolder(this.state, id, false))
+        },
+      },
+    ]).popup({ window: this.win })
   }
 
   toggleSidebar() {
@@ -740,8 +1004,41 @@ export class BrowserShell {
     if (!tab) return
     const loaded = this.views.has(id)
     const rt = this.runtime[id]
+    const space = this.space()
+    const otherSpaces = this.state.spaces.filter((s) => s.id !== tab.spaceId)
+    const loc = locate(this.state, id)
     const items: Electron.MenuItemConstructorOptions[] = [
-      { label: tab.pinned ? 'Unpin Tab' : 'Pin Tab', click: () => this.togglePin(id) },
+      { label: tab.kind === 'favorite' ? 'Remove from Favorites' : 'Add to Favorites', click: () => this.toggleFavorite(id) },
+      ...(tab.kind !== 'favorite' ? [{ label: tab.kind === 'pinned' ? 'Unpin Tab' : 'Pin Tab', click: () => this.togglePin(id) }] : []),
+      ...(tab.kind !== 'favorite'
+        ? [
+            {
+              label: 'Add to New Folder',
+              click: () => this.newFolder(tab.kind === 'pinned' ? 'pinned' : 'today', id),
+            },
+          ]
+        : []),
+      ...(loc?.ref.type === 'folder'
+        ? [{ label: 'Remove from Folder', click: () => this.moveItem(id, { type: tab.kind === 'pinned' ? 'pinned' : 'today' }, 0) }]
+        : []),
+      ...(tab.kind !== 'favorite' && otherSpaces.length
+        ? [
+            {
+              label: 'Move to Space',
+              submenu: otherSpaces.map((target) => ({
+                label: target.name + (target.partition !== space.partition ? ' (other profile)' : ''),
+                click: () => {
+                  // A page can't change profile while loaded: reload it in the new one.
+                  if (target.partition !== this.partitionOf(tab)) this.unload(id)
+                  moveItem(this.state, id, target.id, { type: tab.kind === 'pinned' ? 'pinned' : 'today' }, 0)
+                  if (this.state.activeTabId === id) this.switchSpace(target.id)
+                  this.emit()
+                },
+              })),
+            },
+          ]
+        : []),
+      { type: 'separator' },
       { label: 'Copy Link', click: () => clipboard.writeText(tab.url) },
       { label: 'Duplicate Tab', click: () => this.openTab(tab.url, { afterTabId: id }) },
       { type: 'separator' },
@@ -765,7 +1062,7 @@ export class BrowserShell {
         click: () => this.sleepTab(id),
       },
     ]
-    if (tab.pinned) {
+    if (tab.kind !== 'today') {
       items.push(
         { label: 'Unload Tab', enabled: loaded, click: () => this.closeTab(id) },
         {
@@ -786,7 +1083,7 @@ export class BrowserShell {
           },
         },
         { type: 'separator' },
-        { label: 'Delete Pinned Tab', click: () => this.removeTab(id) },
+        { label: tab.kind === 'favorite' ? 'Delete Favorite' : 'Delete Pinned Tab', click: () => this.removeTab(id) },
       )
     } else {
       items.push({ label: 'Close Tab', click: () => this.removeTab(id) })
@@ -898,6 +1195,33 @@ export class BrowserShell {
         return this.clearToday()
       case 'archive.restore':
         return this.restoreArchived(action.index)
+      case 'tab.toggleFavorite':
+        return this.toggleFavorite(action.id)
+      case 'item.move':
+        return this.moveItem(action.id, action.to, Number(action.index) || 0)
+      case 'space.switch':
+        return this.switchSpace(action.id)
+      case 'space.cycle':
+        return this.cycleSpace(action.delta === -1 ? -1 : 1)
+      case 'space.addMenu':
+        return this.showAddSpaceMenu()
+      case 'space.menu':
+        return this.showSpaceMenu(action.id)
+      case 'space.rename':
+        return this.renameSpace(action.id, String(action.name ?? ''))
+      case 'folder.toggle':
+        return this.toggleFolder(action.id)
+      case 'folder.rename':
+        return this.renameFolder(action.id, String(action.name ?? ''))
+      case 'folder.menu':
+        return this.showFolderMenu(action.id)
+      case 'folder.create':
+        return this.newFolder(action.list === 'today' ? 'today' : 'pinned')
+      case 'edit.cancel':
+        this.editing = null
+        return this.emit(false)
+      case 'tabs.tidy':
+        return this.tidy()
     }
   }
 }

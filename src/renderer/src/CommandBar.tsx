@@ -33,16 +33,18 @@ function buildResults(state: UIState, input: string): Result[] {
     results.push({ kind: 'go', input: query, url, isSearch })
   }
 
+  // Tabs from every space; the current space ranks first on ties.
+  const here = (t: Tab) => (t.spaceId === state.activeSpaceId || t.kind === 'favorite' ? 1 : 0)
   const tabs = state.tabs
-    .filter((t) => t.spaceId === state.activeSpaceId && t.id !== state.activeTabId)
+    .filter((t) => t.id !== state.activeTabId)
     .map((tab) => ({ tab, s: score(query, tab.title, tab.url) }))
     .filter((x) => x.s > 0)
-    .sort((a, b) => b.s - a.s || b.tab.lastActiveAt - a.tab.lastActiveAt)
+    .sort((a, b) => b.s - a.s || here(b.tab) - here(a.tab) || b.tab.lastActiveAt - a.tab.lastActiveAt)
   for (const { tab } of tabs) results.push({ kind: 'tab', tab })
 
   const archived = state.archive
     .map((item, index) => ({ item, index, s: score(query, item.title, item.url) }))
-    .filter((x) => x.s > 0 && x.item.spaceId === state.activeSpaceId)
+    .filter((x) => x.s > 0)
     .sort((a, b) => b.s - a.s)
   for (const { item, index } of archived) results.push({ kind: 'archive', item, index })
 
@@ -130,7 +132,7 @@ export function CommandBar({ state }: { state: UIState }) {
                   run(r)
                 }}
               >
-                <ResultRow r={r} engine={SEARCH_ENGINES[state.searchEngine].name} />
+                <ResultRow r={r} engine={SEARCH_ENGINES[state.searchEngine].name} state={state} />
               </li>
             ))}
           </ul>
@@ -140,7 +142,7 @@ export function CommandBar({ state }: { state: UIState }) {
   )
 }
 
-function ResultRow({ r, engine }: { r: Result; engine: string }) {
+function ResultRow({ r, engine, state }: { r: Result; engine: string; state: UIState }) {
   if (r.kind === 'go') {
     return (
       <>
@@ -153,12 +155,15 @@ function ResultRow({ r, engine }: { r: Result; engine: string }) {
     )
   }
   const item = r.kind === 'tab' ? r.tab : r.item
+  const elsewhere = item.spaceId !== state.activeSpaceId && !(r.kind === 'tab' && r.tab.kind === 'favorite')
+  const spaceName = state.spaces.find((s) => s.id === item.spaceId)?.name
   return (
     <>
       <Favicon src={item.favicon} url={item.url} />
       <span className="result-title">{item.title || displayHost(item.url)}</span>
       <span className="result-meta">
         <Icon name={r.kind === 'tab' ? 'tab' : 'clock'} size={12} /> {r.kind === 'tab' ? 'Switch to Tab' : 'Archived'}
+        {elsewhere && spaceName ? ` · ${spaceName}` : ''}
       </span>
     </>
   )

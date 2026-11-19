@@ -2,6 +2,7 @@ import { app } from 'electron'
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { PersistedState } from '../shared/types'
+import { migrate, repair } from './model'
 
 const MAX_ARCHIVE = 500
 
@@ -11,10 +12,14 @@ function filePath(): string {
 
 export function defaultState(): PersistedState {
   return {
-    version: 1,
-    spaces: [{ id: 'personal', name: 'Personal', color: '#7c6cf2', partition: 'persist:space-personal' }],
+    version: 2,
+    spaces: [
+      { id: 'personal', name: 'Personal', color: '#7c6cf2', partition: 'persist:space-personal', pinned: [], today: [], lastTabId: null },
+    ],
     activeSpaceId: 'personal',
     tabs: [],
+    folders: [],
+    favorites: {},
     activeTabId: null,
     archive: [],
     sidebarVisible: true,
@@ -23,6 +28,7 @@ export function defaultState(): PersistedState {
       sleepAfterMinutes: 15,
       // Intel Macs can't hardware-decode VP9/AV1, which YouTube prefers.
       preferH264: process.platform === 'darwin' && process.arch === 'x64',
+      archiveAfterHours: 12,
     },
     shields: {
       enabled: true,
@@ -38,8 +44,8 @@ export function loadState(): PersistedState {
   const path = filePath()
   if (!existsSync(path)) return defaultState()
   try {
-    const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<PersistedState>
-    if (parsed.version !== 1 || !Array.isArray(parsed.spaces) || !Array.isArray(parsed.tabs)) {
+    const parsed = migrate(JSON.parse(readFileSync(path, 'utf8'))) as Partial<PersistedState>
+    if (parsed.version !== 2 || !Array.isArray(parsed.spaces) || !parsed.spaces.length || !Array.isArray(parsed.tabs)) {
       throw new Error('unrecognized state file')
     }
     const defaults = defaultState()
@@ -49,8 +55,7 @@ export function loadState(): PersistedState {
       settings: { ...defaults.settings, ...parsed.settings },
       shields: { ...defaults.shields, ...parsed.shields },
     } as PersistedState
-    if (!state.spaces.some((s) => s.id === state.activeSpaceId)) state.activeSpaceId = state.spaces[0].id
-    if (state.activeTabId && !state.tabs.some((t) => t.id === state.activeTabId)) state.activeTabId = null
+    repair(state)
     return state
   } catch (err) {
     // Keep the broken file for inspection instead of silently losing tabs.

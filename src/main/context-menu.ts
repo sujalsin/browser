@@ -1,5 +1,5 @@
 import { Menu, clipboard, type MenuItemConstructorOptions, type WebContents } from 'electron'
-import { getExtensions } from './extensions'
+import { ElectronChromeExtensions } from 'electron-chrome-extensions'
 import type { BrowserShell } from './shell'
 
 /** Right-click menu for web pages (Electron has none by default). */
@@ -70,7 +70,7 @@ export function attachWebContextMenu(shell: BrowserShell, wc: WebContents): void
       )
     }
 
-    const extItems = getExtensions(shell.currentPartition()).getContextMenuItems(wc, params)
+    const extItems = ElectronChromeExtensions.fromSession(wc.session)?.getContextMenuItems(wc, params) ?? []
     if (extItems.length) {
       items.push(...(extItems as unknown as MenuItemConstructorOptions[]))
       items.push({ type: 'separator' })
