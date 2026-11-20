@@ -20,6 +20,8 @@ export function defaultState(): PersistedState {
     tabs: [],
     folders: [],
     favorites: {},
+    splits: [],
+    boosts: [],
     activeTabId: null,
     archive: [],
     sidebarVisible: true,
@@ -29,6 +31,9 @@ export function defaultState(): PersistedState {
       // Intel Macs can't hardware-decode VP9/AV1, which YouTube prefers.
       preferH264: process.platform === 'darwin' && process.arch === 'x64',
       archiveAfterHours: 12,
+      appearance: 'system',
+      peekFromPinned: true,
+      littleArcForLinks: true,
     },
     shields: {
       enabled: true,

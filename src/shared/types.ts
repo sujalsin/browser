@@ -13,6 +13,27 @@ export interface Space {
   today: string[]
   /** Tab to show when switching back to this space. */
   lastTabId: string | null
+  /** Optional second color: the sidebar becomes a gradient from `color` to this. */
+  gradient?: string
+}
+
+/** Two tabs shown side by side. */
+export interface Split {
+  id: string
+  tabIds: [string, string]
+  /** Width of the left pane as a fraction of the content area (0.2–0.8). */
+  ratio: number
+}
+
+/** Custom CSS/JS for a site (Arc's Boosts). */
+export interface Boost {
+  id: string
+  /** Applies to this host and its subdomains, e.g. "youtube.com". */
+  domain: string
+  enabled: boolean
+  css: string
+  js: string
+  updated: number
 }
 
 /** Where a tab lives: favorites (per profile), pinned, or Today (per space). */
@@ -124,6 +145,8 @@ export interface PersistedState {
   folders: Folder[]
   /** Favorite tab ids per profile (session partition). */
   favorites: Record<string, string[]>
+  splits: Split[]
+  boosts: Boost[]
   activeTabId: string | null
   archive: ArchivedTab[]
   sidebarVisible: boolean
@@ -163,6 +186,12 @@ export interface Settings {
   preferH264: boolean
   /** Archive Today tabs not used for this many hours (Arc default 12). 0 = never. */
   archiveAfterHours: number
+  /** Light/dark for the browser and the pages that support it. */
+  appearance: 'system' | 'light' | 'dark'
+  /** Links opened in a new tab from pinned tabs and favorites open in Peek instead (Arc behavior). */
+  peekFromPinned: boolean
+  /** Links from other apps open in a Little Arc window instead of a tab. */
+  littleArcForLinks: boolean
 }
 
 /** What the UI receives. */
@@ -186,9 +215,36 @@ export interface UIState extends PersistedState {
   library: { tab: LibraryTab } | null
   /** Find-in-page bar for the active tab, when open. */
   find: FindState | null
+  /** Peek: a link previewed in a floating card over the page. */
+  preview: PreviewState | null
+  /** The split on screen, with each pane's rectangle in window coordinates. */
+  splitView: { id: string; ratio: number; panes: { tabId: string; x: number; y: number; width: number; height: number }[] } | null
+  /** The split divider is being dragged (the overlay captures the mouse). */
+  splitDragging: boolean
 }
 
-export type LibraryTab = 'history' | 'downloads' | 'settings'
+export interface PreviewState {
+  url: string
+  title: string
+  loading: boolean
+  canGoBack: boolean
+  /** Where the preview card is, in window coordinates (the UI draws its toolbar above it). */
+  rect: { x: number; y: number; width: number; height: number }
+}
+
+/** What the Little Arc window's toolbar shows. */
+export interface LittleState {
+  url: string
+  title: string
+  loading: boolean
+  canGoBack: boolean
+  canGoForward: boolean
+  spaceName: string
+  color: string
+  platform: string
+}
+
+export type LibraryTab = 'history' | 'downloads' | 'settings' | 'boosts'
 
 export interface FindState {
   query: string
@@ -241,6 +297,24 @@ export type Action =
   | { type: 'find.open' }
   | { type: 'find.query'; text: string; forward?: boolean; next?: boolean }
   | { type: 'find.close' }
+  | { type: 'split.create'; tabId: string }
+  | { type: 'split.newTab' }
+  | { type: 'split.exit'; id: string }
+  | { type: 'split.swap'; id: string }
+  | { type: 'split.resize'; id: string; ratio: number }
+  | { type: 'split.drag'; active: boolean }
+  | { type: 'preview.close' }
+  | { type: 'preview.toTab' }
+  | { type: 'preview.back' }
+  | { type: 'boost.save'; boost: Boost }
+  | { type: 'boost.delete'; id: string }
+  | { type: 'space.update'; id: string; color?: string; gradient?: string | null }
+  | { type: 'little.open'; url?: string }
+  | { type: 'little.navigate'; input: string }
+  | { type: 'little.back' }
+  | { type: 'little.forward' }
+  | { type: 'little.reload' }
+  | { type: 'little.toMain' }
   | { type: 'tab.contextMenu'; id: string }
   | { type: 'nav.back' }
   | { type: 'nav.forward' }
@@ -275,4 +349,5 @@ export const IPC = {
   action: 'browser:action',
   getState: 'browser:get-state',
   query: 'browser:query',
+  littleState: 'browser:little-state',
 } as const

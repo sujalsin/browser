@@ -28,8 +28,9 @@ export function App() {
       <main className="content" style={{ left: state.sidebarVisible ? SIDEBAR_WIDTH : VIEW_GAP }}>
         <div className="drag-strip" />
         {!state.activeTabId && <EmptyState />}
-        {state.activeTabId && state.runtime[state.activeTabId]?.error && <LoadError error={state.runtime[state.activeTabId].error!} />}
+        {state.activeTabId && !state.splitView && state.runtime[state.activeTabId]?.error && <LoadError error={state.runtime[state.activeTabId].error!} />}
       </main>
+      {state.splitView && <SplitChrome state={state} />}
     </div>
   )
 }
@@ -63,5 +64,34 @@ function LoadError({ error }: { error: NonNullable<TabRuntime['error']> }) {
         </button>
       </div>
     </div>
+  )
+}
+
+/** Split view: a ring around the active pane and a draggable divider between the two. */
+function SplitChrome({ state }: { state: UIState }) {
+  const split = state.splitView!
+  const [a, b] = split.panes
+  const active = split.panes.find((p) => p.tabId === state.activeTabId)
+  return (
+    <>
+      {active && (
+        <div
+          className="split-ring"
+          style={{ left: active.x - 2, top: active.y - 2, width: active.width + 4, height: active.height + 4 }}
+        />
+      )}
+      <div
+        className="split-divider"
+        title="Drag to resize · double-click to reset"
+        style={{ left: a.x + a.width, top: a.y, width: b.x - (a.x + a.width), height: a.height }}
+        onMouseDown={(e) => {
+          e.preventDefault()
+          dispatch({ type: 'split.drag', active: true })
+        }}
+        onDoubleClick={() => dispatch({ type: 'split.resize', id: split.id, ratio: 0.5 })}
+      >
+        <span className="split-grip" />
+      </div>
+    </>
   )
 }

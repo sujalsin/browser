@@ -138,6 +138,23 @@ export function installMenu(getShell: () => BrowserShell | null): void {
       submenu: [
         { label: 'Toggle Sidebar', accelerator: 'CmdOrCtrl+S', click: withShell((s) => s.toggleSidebar()) },
         { type: 'separator' },
+        { label: 'Split View with New Tab', accelerator: 'Ctrl+Shift+=', click: withShell((s) => s.splitWithNewTab()) },
+        {
+          label: 'Exit Split View',
+          accelerator: 'Ctrl+Shift+-',
+          click: withShell((s) => {
+            const id = s.activeSplitId()
+            if (id) s.exitSplit(id)
+          }),
+        },
+        {
+          label: 'Swap Split Sides',
+          click: withShell((s) => {
+            const id = s.activeSplitId()
+            if (id) s.swapSplit(id)
+          }),
+        },
+        { type: 'separator' },
         { label: 'Reload Page', accelerator: 'CmdOrCtrl+R', click: active((wc) => wc.reload()) },
         { label: 'Hard Reload', accelerator: 'CmdOrCtrl+Shift+R', click: active((wc) => wc.reloadIgnoringCache()) },
         { type: 'separator' },

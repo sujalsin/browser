@@ -147,6 +147,7 @@ export function addTab(s: PersistedState, tab: Tab, spaceId: string, ref: ListRe
 export function removeTab(s: PersistedState, id: string): Location | null {
   const loc = detach(s, id)
   s.tabs = s.tabs.filter((t) => t.id !== id)
+  s.splits = (s.splits ?? []).filter((sp) => !sp.tabIds.includes(id))
   removeEmptyAutoFolders(s)
   return loc
 }
@@ -421,6 +422,15 @@ export function repair(s: PersistedState) {
     space.today.push(tab.id)
   }
   for (const sp of s.spaces) if (sp.lastTabId && !tabIds.has(sp.lastTabId)) sp.lastTabId = null
+  // Splits need both tabs, and a tab can be in only one split.
+  s.splits ??= []
+  s.boosts ??= []
+  const inSplit = new Set<string>()
+  s.splits = s.splits.filter((sp) => {
+    const ok = sp.tabIds.length === 2 && sp.tabIds[0] !== sp.tabIds[1] && sp.tabIds.every((id) => tabIds.has(id) && !inSplit.has(id))
+    if (ok) sp.tabIds.forEach((id) => inSplit.add(id))
+    return ok
+  })
   if (!spaceById(s, s.activeSpaceId)) s.activeSpaceId = s.spaces[0].id
   if (s.activeTabId && !tabIds.has(s.activeTabId)) s.activeTabId = null
 }

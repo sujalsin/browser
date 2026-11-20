@@ -1419,3 +1419,38 @@ html[data-surface='find'] body {
   border-radius: 50%;
   background: var(--space);
 }
+
+/* ───────────── split view ───────────── */
+
+.split-ring {
+  position: absolute;
+  border: 2px solid color-mix(in oklab, var(--space) 70%, transparent);
+  border-radius: 12px;
+  pointer-events: none;
+}
+
+.split-divider {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  cursor: col-resize;
+  -webkit-app-region: no-drag;
+}
+
+.split-grip {
+  width: 3px;
+  height: 36px;
+  border-radius: 2px;
+  background: var(--text-dim);
+  opacity: 0.35;
+}
+
+.split-divider:hover .split-grip {
+  opacity: 0.8;
+}
+
+.split-drag-surface {
+  position: fixed;
+  inset: 0;
+  cursor: col-resize;
+}

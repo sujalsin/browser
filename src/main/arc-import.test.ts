@@ -72,11 +72,13 @@ function emptyState(): PersistedState {
     tabs: [],
     folders: [],
     favorites: {},
+    splits: [],
+    boosts: [],
     activeTabId: null,
     archive: [],
     sidebarVisible: true,
     searchEngine: 'google',
-    settings: { sleepAfterMinutes: 15, preferH264: false, archiveAfterHours: 12 },
+    settings: { sleepAfterMinutes: 15, preferH264: false, archiveAfterHours: 12, appearance: 'system', peekFromPinned: true, littleArcForLinks: true },
     shields: { enabled: true, disabledSites: [], blockCookieBanners: true, upgradeHttps: true, stripTrackingParams: true },
   }
 }

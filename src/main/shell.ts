@@ -94,9 +94,14 @@ export class BrowserShell {
   private views = new Map<string, WebContentsView>()
   private runtime: Record<string, TabRuntime> = {}
   private commandBar: CommandBarState | null = null
-  private htmlFullscreen = false
+  /** Tab whose page is in HTML fullscreen (video), if any. */
+  private fullscreenTab: string | null = null
   private closed: ClosedTab[] = []
-  private attachedTabId: string | null = null
+  /** Tabs on screen: the active one, plus its split partner. */
+  private attached: string[] = []
+  private splitDragging = false
+  /** ⌃⇧= was pressed: the next tab opened from the command bar joins a split with this one. */
+  private pendingSplitWith: string | null = null
   /** True while registering a view with the extension system (see createView). */
   registeringTab = false
   private emitTimer: NodeJS.Timeout | null = null
@@ -200,7 +205,7 @@ export class BrowserShell {
 
   /** Load the tab that was active last time. Called once extensions are ready. */
   restoreActiveTab() {
-    if (this.state.activeTabId && !this.attachedTabId) this.activate(this.state.activeTabId)
+    if (this.state.activeTabId && !this.attached.length) this.activate(this.state.activeTabId)
   }
 
   // ───────────────────────────── state helpers ─────────────────────────────
@@ -250,7 +255,7 @@ export class BrowserShell {
       archive: this.state.archive.slice(0, ARCHIVE_IN_SNAPSHOT),
       runtime: this.runtime,
       commandBar: this.commandBar,
-      htmlFullscreen: this.htmlFullscreen,
+      htmlFullscreen: !!this.fullscreenTab,
       platform: process.platform,
       peek: this.peek,
       shieldsStatus: this.shields?.getStatus() ?? { ready: false, updating: false },
@@ -260,6 +265,9 @@ export class BrowserShell {
       downloadsUnseen: this.downloadsUnseen,
       library: this.library,
       find: this.find,
+      preview: null,
+      splitView: this.splitViewInfo(),
+      splitDragging: this.splitDragging,
     }
   }
 
@@ -278,7 +286,7 @@ export class BrowserShell {
   }
 
   private overlayVisible() {
-    return !!this.overlay && (!!this.commandBar || this.peek || !!this.library)
+    return !!this.overlay && (!!this.commandBar || this.peek || !!this.library || this.splitDragging)
   }
 
   /**
@@ -307,30 +315,61 @@ export class BrowserShell {
 
   // ───────────────────────────── layout ─────────────────────────────
 
+  /** The page area of the window (right of the sidebar, inside the gaps). */
+  private contentBox() {
+    const [width, height] = this.win.getContentSize()
+    const left = this.state.sidebarVisible ? SIDEBAR_WIDTH : VIEW_GAP
+    return { x: left, y: VIEW_GAP, width: Math.max(0, width - left - VIEW_GAP), height: Math.max(0, height - VIEW_GAP * 2) }
+  }
+
+  /** Rectangles for the visible panes: one full box, or two side by side for a split. */
+  private paneRects(): Map<string, Electron.Rectangle> {
+    const box = this.contentBox()
+    const rects = new Map<string, Electron.Rectangle>()
+    if (this.attached.length === 2) {
+      const split = this.splitOf(this.attached[0])
+      const ratio = split?.ratio ?? 0.5
+      const leftW = Math.round((box.width - VIEW_GAP) * ratio)
+      rects.set(this.attached[0], { ...box, width: leftW })
+      rects.set(this.attached[1], { ...box, x: box.x + leftW + VIEW_GAP, width: box.width - leftW - VIEW_GAP })
+    } else if (this.attached[0]) {
+      rects.set(this.attached[0], box)
+    }
+    return rects
+  }
+
+  private splitViewInfo(): UIState['splitView'] {
+    if (this.attached.length !== 2 || this.fullscreenTab) return null
+    const split = this.splitOf(this.attached[0])
+    if (!split) return null
+    const rects = this.paneRects()
+    return { id: split.id, ratio: split.ratio, panes: this.attached.map((tabId) => ({ tabId, ...rects.get(tabId)! })) }
+  }
+
   private layout() {
     if (this.win.isDestroyed()) return
     const [width, height] = this.win.getContentSize()
-    const view = this.attachedTabId ? this.views.get(this.attachedTabId) : undefined
-    if (view) {
-      // Failed loads are shown by the UI underneath, so hide the blank page.
-      view.setVisible(!this.runtime[this.attachedTabId!]?.error)
-      if (this.htmlFullscreen) {
+    const rects = this.paneRects()
+    for (const id of this.attached) {
+      const view = this.views.get(id)
+      if (!view) continue
+      if (this.fullscreenTab) {
+        // A video went fullscreen: that page fills the window, its split partner hides.
+        view.setVisible(id === this.fullscreenTab)
         view.setBounds({ x: 0, y: 0, width, height })
         view.setBorderRadius(0)
-      } else {
-        const left = this.state.sidebarVisible ? SIDEBAR_WIDTH : VIEW_GAP
-        view.setBounds({
-          x: left,
-          y: VIEW_GAP,
-          width: Math.max(0, width - left - VIEW_GAP),
-          height: Math.max(0, height - VIEW_GAP * 2),
-        })
-        view.setBorderRadius(VIEW_RADIUS)
+        continue
       }
+      // Failed loads are shown by the UI underneath, so hide the blank page (single pane only).
+      view.setVisible(this.attached.length > 1 || !this.runtime[id]?.error)
+      view.setBounds(rects.get(id)!)
+      view.setBorderRadius(VIEW_RADIUS)
     }
-    // Command bar: whole window. Peek: just the sidebar strip, so the page stays clickable.
+    // Command bar, Library, split dragging: whole window. Peek sidebar: just its strip.
     this.overlay?.setBounds(
-      this.commandBar || this.library ? { x: 0, y: 0, width, height } : { x: 0, y: 0, width: Math.min(width, SIDEBAR_WIDTH + 16), height },
+      this.commandBar || this.library || this.splitDragging
+        ? { x: 0, y: 0, width, height }
+        : { x: 0, y: 0, width: Math.min(width, SIDEBAR_WIDTH + 16), height },
     )
     // Find bar: top-right corner of the page.
     if (this.findView) {
@@ -346,20 +385,38 @@ export class BrowserShell {
     this.win.setWindowButtonVisibility(this.state.sidebarVisible || this.peek)
   }
 
-  /** Show the view for `id` (or nothing) in the content area. */
+  /** Show tab `id` (and its split partner) in the content area, or nothing. */
   private attach(id: string | null) {
-    if (this.attachedTabId === id) return
-    const old = this.attachedTabId ? this.views.get(this.attachedTabId) : undefined
-    if (old) this.win.contentView.removeChildView(old)
-    this.attachedTabId = id
-    const view = id ? this.views.get(id) : undefined
-    if (view) {
-      this.win.contentView.addChildView(view)
-      // Keep the find bar and overlay (command bar / peek sidebar) on top.
+    const split = id ? this.splitOf(id) : undefined
+    const next: string[] = split ? [...split.tabIds] : id ? [id] : []
+    // The partner of a split needs a page too.
+    for (const tid of next) {
+      const tab = this.tab(tid)
+      if (tab && !this.views.has(tid)) this.ensureView(tab)
+    }
+    const ids = next.filter((tid) => this.views.has(tid))
+    if (ids.length === this.attached.length && ids.every((x, i) => x === this.attached[i])) return this.layout()
+    for (const old of this.attached) {
+      const view = this.views.get(old)
+      if (view && !ids.includes(old)) this.win.contentView.removeChildView(view)
+    }
+    this.attached = ids
+    for (const tid of ids) this.win.contentView.addChildView(this.views.get(tid)!)
+    // Keep the find bar and overlay (command bar / peek sidebar) on top.
+    if (ids.length) {
       if (this.find && this.findView) this.win.contentView.addChildView(this.findView)
       if (this.overlayVisible()) this.win.contentView.addChildView(this.overlay!)
     }
     this.layout()
+  }
+
+  /** The split the active tab is in, if any. */
+  activeSplitId(): string | undefined {
+    return this.state.activeTabId ? this.splitOf(this.state.activeTabId)?.id : undefined
+  }
+
+  private splitOf(tabId: string) {
+    return this.state.splits.find((s) => s.tabIds.includes(tabId))
   }
 
   // ───────────────────────────── tab views ─────────────────────────────
@@ -490,6 +547,23 @@ export class BrowserShell {
       const url = wc.getURL()
       if (favicons[0] && isWebUrl(url)) this.record((db) => db.setFavicon(url, favicons[0]))
     })
+    // Clicking into the other pane of a split makes it the active tab.
+    const focusPane = () => {
+      if (this.attached.length === 2 && this.attached.includes(id) && this.state.activeTabId !== id) {
+        const tab = this.tab(id)
+        if (!tab) return
+        this.closeFind()
+        tab.lastActiveAt = Date.now()
+        this.state.activeTabId = id
+        this.space().lastTabId = id
+        getExtensions(this.partitionOf(tab)).selectTab(wc)
+        this.emit()
+      }
+    }
+    wc.on('focus', focusPane)
+    wc.on('before-mouse-event', (_e, mouse) => {
+      if (mouse.type === 'mouseDown') focusPane()
+    })
     wc.on('found-in-page', (_e, result) => {
       if (!this.find || this.state.activeTabId !== id) return
       this.find.active = result.activeMatchOrdinal
@@ -501,12 +575,12 @@ export class BrowserShell {
       this.emit(false)
     })
     wc.on('enter-html-full-screen', () => {
-      this.htmlFullscreen = true
+      this.fullscreenTab = id
       this.layout()
       this.emit(false)
     })
     wc.on('leave-html-full-screen', () => {
-      this.htmlFullscreen = false
+      if (this.fullscreenTab === id) this.fullscreenTab = null
       this.layout()
       this.emit(false)
     })
@@ -566,7 +640,12 @@ export class BrowserShell {
     } else {
       this.sleptHistory.delete(id)
     }
-    if (this.attachedTabId === id && !this.win.isDestroyed()) this.attach(null)
+    if (this.attached.includes(id) && !this.win.isDestroyed()) {
+      const view = this.views.get(id)
+      if (view) this.win.contentView.removeChildView(view)
+      this.attached = this.attached.filter((x) => x !== id)
+      this.layout()
+    }
     this.views.delete(id)
     this.typedIn.delete(id)
     delete this.runtime[id]
@@ -575,7 +654,7 @@ export class BrowserShell {
 
   /** Put a background tab to sleep: frees its memory and CPU; it reloads when selected. */
   sleepTab(id: string) {
-    if (id === this.state.activeTabId || !this.views.has(id)) return
+    if (id === this.state.activeTabId || this.attached.includes(id) || !this.views.has(id)) return
     this.unload(id, true)
     this.emit(false)
   }
@@ -588,7 +667,7 @@ export class BrowserShell {
     for (const [id, view] of this.views) {
       const tab = this.tab(id)
       const rt = this.runtime[id]
-      if (!tab || id === this.state.activeTabId || tab.lastActiveAt > cutoff) continue
+      if (!tab || id === this.state.activeTabId || this.attached.includes(id) || tab.lastActiveAt > cutoff) continue
       // Keep tabs that are playing sound (music, calls) or have typed text.
       if (rt?.audible || this.typedIn.has(id) || view.webContents.isCurrentlyAudible()) continue
       this.unload(id, true)
@@ -646,6 +725,8 @@ export class BrowserShell {
   closeTab(id: string) {
     const tab = this.tab(id)
     if (!tab) return
+    const split = this.splitOf(id)
+    if (split) this.exitSplit(split.id, split.tabIds.find((t) => t !== id))
     if (tab.kind !== 'today') {
       if (!this.views.has(id)) return
       this.selectNeighbor(id)
@@ -779,7 +860,7 @@ export class BrowserShell {
     if (!hours) return
     const stale = staleTodayTabs(this.state, Date.now() - hours * 3_600_000).filter((id) => {
       const rt = this.runtime[id]
-      return id !== this.state.activeTabId && !rt?.audible && !this.typedIn.has(id)
+      return id !== this.state.activeTabId && !this.attached.includes(id) && !rt?.audible && !this.typedIn.has(id)
     })
     const now = Date.now()
     for (const id of stale) archiveTab(this.state, id, now)
@@ -823,7 +904,10 @@ export class BrowserShell {
       view.webContents.focus()
       this.emit()
     } else {
-      this.openTab(url)
+      const splitWith = this.pendingSplitWith
+      this.pendingSplitWith = null
+      const tab = this.openTab(url)
+      if (splitWith && this.tab(splitWith)) this.createSplit(tab.id, splitWith)
     }
   }
 
@@ -831,7 +915,7 @@ export class BrowserShell {
 
   switchSpace(id: string) {
     const space = spaceById(this.state, id)
-    if (!space || (id === this.state.activeSpaceId && this.attachedTabId)) return
+    if (!space || (id === this.state.activeSpaceId && this.attached.length)) return
     const prev = this.activeTab()
     if (prev) prev.lastActiveAt = Date.now()
     this.state.activeSpaceId = id
@@ -1019,7 +1103,7 @@ export class BrowserShell {
 
   /** Arc-style: hovering the left edge shows the hidden sidebar over the page. */
   setPeek(open: boolean) {
-    if (open && (this.state.sidebarVisible || this.htmlFullscreen || this.commandBar || this.library)) return
+    if (open && (this.state.sidebarVisible || this.fullscreenTab || this.commandBar || this.library)) return
     if (this.peek === open) return
     this.peek = open
     const overlay = this.ensureOverlay()
@@ -1068,9 +1152,10 @@ export class BrowserShell {
     this.emitNow()
   }
 
-  closeCommandBar() {
+  closeCommandBar(keepPendingSplit = false) {
     if (!this.commandBar) return
     this.commandBar = null
+    if (!keepPendingSplit) this.pendingSplitWith = null
     if (this.overlay && !this.library) this.win.contentView.removeChildView(this.overlay)
     this.layout()
     this.activeWebContents()?.focus()
@@ -1119,6 +1204,14 @@ export class BrowserShell {
           ]
         : []),
       { type: 'separator' },
+      ...(this.splitOf(id)
+        ? [
+            { label: 'Swap Split Sides', click: () => this.swapSplit(this.splitOf(id)!.id) },
+            { label: 'Exit Split View', click: () => this.exitSplit(this.splitOf(id)!.id, id) },
+          ]
+        : this.state.activeTabId && this.state.activeTabId !== id
+          ? [{ label: 'Open in Split View', click: () => this.createSplit(id) }]
+          : []),
       { label: 'Copy Link', click: () => clipboard.writeText(tab.url) },
       { label: 'Duplicate Tab', click: () => this.openTab(tab.url, { afterTabId: id }) },
       { type: 'separator' },
@@ -1236,6 +1329,62 @@ export class BrowserShell {
       { label: 'Update Filter Lists Now', enabled: !status?.updating, click: () => void this.shields?.refresh() },
     ]
     Menu.buildFromTemplate(items).popup({ window: this.win })
+  }
+
+  // ───────────────────────────── split view ─────────────────────────────
+
+  /** Show `tabId` side by side with the active tab (active on the left). */
+  createSplit(tabId: string, leftId = this.state.activeTabId) {
+    if (!leftId || leftId === tabId || !this.tab(tabId) || !this.tab(leftId)) return
+    // A tab is in at most one split.
+    this.state.splits = this.state.splits.filter((s) => !s.tabIds.includes(tabId) && !s.tabIds.includes(leftId))
+    this.state.splits.push({ id: randomUUID(), tabIds: [leftId, tabId], ratio: 0.5 })
+    this.activate(tabId)
+    this.emit()
+  }
+
+  /** ⌃⇧=: pick a new page for the right side via the command bar. */
+  splitWithNewTab() {
+    if (!this.state.activeTabId) return this.openCommandBar('new')
+    this.pendingSplitWith = this.state.activeTabId
+    this.openCommandBar('new')
+  }
+
+  exitSplit(id: string, keep = this.state.activeTabId ?? undefined) {
+    const split = this.state.splits.find((s) => s.id === id)
+    if (!split) return
+    this.state.splits = this.state.splits.filter((s) => s.id !== id)
+    const show = keep && split.tabIds.includes(keep) ? keep : split.tabIds[0]
+    if (this.state.activeTabId && split.tabIds.includes(this.state.activeTabId)) this.attach(show)
+    this.emit()
+  }
+
+  swapSplit(id: string) {
+    const split = this.state.splits.find((s) => s.id === id)
+    if (!split) return
+    split.tabIds = [split.tabIds[1], split.tabIds[0]]
+    split.ratio = 1 - split.ratio
+    if (this.attached.length === 2 && split.tabIds.includes(this.attached[0])) this.attach(this.state.activeTabId)
+    this.emit()
+  }
+
+  resizeSplit(id: string, ratio: number) {
+    const split = this.state.splits.find((s) => s.id === id)
+    if (!split || !Number.isFinite(ratio)) return
+    split.ratio = Math.min(0.8, Math.max(0.2, ratio))
+    this.layout()
+    this.emit()
+  }
+
+  /** While dragging the divider, the overlay covers the window so mouse moves reach the UI. */
+  setSplitDragging(active: boolean) {
+    if (this.splitDragging === active) return
+    this.splitDragging = active
+    const overlay = this.ensureOverlay()
+    if (active) this.win.contentView.addChildView(overlay)
+    else if (!this.overlayVisible()) this.win.contentView.removeChildView(overlay)
+    this.layout()
+    this.emitNow()
   }
 
   // ───────────────────────────── find in page ─────────────────────────────
@@ -1491,8 +1640,10 @@ export class BrowserShell {
       case 'tab.close':
         return this.closeTab(action.id)
       case 'tab.open':
-        this.closeCommandBar()
-        return this.navigate(action.input, action.mode)
+        this.closeCommandBar(true)
+        this.navigate(action.input, action.mode)
+        this.pendingSplitWith = null
+        return
       case 'tab.togglePin':
         return this.togglePin(action.id)
       case 'tab.contextMenu':
@@ -1577,6 +1728,18 @@ export class BrowserShell {
         app.setAsDefaultProtocolClient('http')
         app.setAsDefaultProtocolClient('https')
         return this.emit(false)
+      case 'split.create':
+        return this.createSplit(String(action.tabId))
+      case 'split.newTab':
+        return this.splitWithNewTab()
+      case 'split.exit':
+        return this.exitSplit(String(action.id))
+      case 'split.swap':
+        return this.swapSplit(String(action.id))
+      case 'split.resize':
+        return this.resizeSplit(String(action.id), Number(action.ratio))
+      case 'split.drag':
+        return this.setSplitDragging(!!action.active)
       case 'find.open':
         return this.openFind()
       case 'find.query':

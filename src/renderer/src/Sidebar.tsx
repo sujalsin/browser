@@ -354,6 +354,11 @@ function TabRow({ tab, listRef, index }: { tab: Tab; listRef: ListRef; index: nu
       <Favicon src={tab.favicon} loading={rt?.loading} url={tab.url} />
       <span className="tab-title">{tab.title || displayHost(tab.url)}</span>
       {rt?.audible && <Icon name={rt.muted ? 'muted' : 'speaker'} size={13} className="tab-audio" />}
+      {state.splits.some((sp) => sp.tabIds.includes(tab.id)) && (
+        <span title="In split view">
+          <Icon name="split" size={13} className="tab-audio" />
+        </span>
+      )}
       {showClose && (
         <button
           className="tab-close"
