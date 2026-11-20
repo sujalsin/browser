@@ -11,6 +11,7 @@ export function attachWebContextMenu(shell: BrowserShell, wc: WebContents): void
     if (params.linkURL) {
       items.push(
         { label: 'Open Link in New Tab', click: () => shell.openTab(params.linkURL, { activate: false, afterTabId: tabId }) },
+        { label: 'Open Link in Peek', click: () => shell.openPreview(params.linkURL, shell.partitionForWebContents(wc)) },
         { label: 'Copy Link', click: () => clipboard.writeText(params.linkURL) },
         { type: 'separator' },
       )

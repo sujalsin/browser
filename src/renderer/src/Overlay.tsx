@@ -3,6 +3,9 @@ import { themeStyle } from './App'
 import { Sidebar } from './Sidebar'
 import { CommandBar } from './CommandBar'
 import { Library } from './Library'
+import { displayHost } from '../../shared/url'
+import { Favicon } from './Favicon'
+import { Icon } from './Icon'
 import { dispatch, useBrowserState } from './useBrowserState'
 
 /**
@@ -20,6 +23,8 @@ export function Overlay() {
         <CommandBar state={state} />
       ) : state.library ? (
         <Library state={state} />
+      ) : state.preview ? (
+        <PreviewChrome state={state} />
       ) : state.peek ? (
         <PeekSidebar state={state} />
       ) : null}
@@ -76,5 +81,38 @@ function SplitDragSurface({ state }: { state: Parameters<typeof Sidebar>[0]['sta
       onMouseUp={end}
       onMouseLeave={end}
     />
+  )
+}
+
+/** Peek: dimmed backdrop, a toolbar above the floating page, and its shadow. */
+function PreviewChrome({ state }: { state: Parameters<typeof Sidebar>[0]['state'] }) {
+  const p = state.preview!
+  const r = p.rect
+  const close = () => dispatch({ type: 'preview.close' })
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+  return (
+    <div className="preview-backdrop" onMouseDown={(e) => e.target === e.currentTarget && close()}>
+      <div className="preview-shadow" style={{ left: r.x, top: r.y, width: r.width, height: r.height }} />
+      <div className="preview-toolbar" style={{ left: r.x, top: r.y - 46, width: r.width }}>
+        <button className="icon-btn" title="Back" disabled={!p.canGoBack} onClick={() => dispatch({ type: 'preview.back' })}>
+          <Icon name="back" size={15} />
+        </button>
+        <Favicon url={p.url} loading={p.loading} />
+        <span className="preview-title">{p.title && p.title !== p.url ? p.title : displayHost(p.url)}</span>
+        <span className="preview-host">{displayHost(p.url)}</span>
+        <button className="lib-button small" title="Keep reading in a new tab" onClick={() => dispatch({ type: 'preview.toTab' })}>
+          <Icon name="external" size={12} /> Open in New Tab
+        </button>
+        <button className="icon-btn" title="Close (Esc)" onClick={close}>
+          <Icon name="close" size={14} />
+        </button>
+      </div>
+    </div>
   )
 }

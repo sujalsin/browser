@@ -100,6 +100,9 @@ export class BrowserShell {
   /** Tabs on screen: the active one, plus its split partner. */
   private attached: string[] = []
   private splitDragging = false
+  /** Peek: a page previewed in a floating card over the content. */
+  private previewView: WebContentsView | null = null
+  private preview: { url: string; title: string; loading: boolean; canGoBack: boolean } | null = null
   /** ⌃⇧= was pressed: the next tab opened from the command bar joins a split with this one. */
   private pendingSplitWith: string | null = null
   /** True while registering a view with the extension system (see createView). */
@@ -196,6 +199,7 @@ export class BrowserShell {
       // Tab views are not owned by the window; tear them down explicitly.
       for (const id of [...this.views.keys()]) this.unload(id)
       if (this.overlay && !this.overlay.webContents.isDestroyed()) this.overlay.webContents.close()
+      if (this.previewView && !this.previewView.webContents.isDestroyed()) this.previewView.webContents.close()
     })
     this.win.webContents.on('did-finish-load', () => this.emitNow())
     this.sleepTimer = setInterval(() => this.sleepIdleTabs(), SLEEP_CHECK_MS)
@@ -265,7 +269,7 @@ export class BrowserShell {
       downloadsUnseen: this.downloadsUnseen,
       library: this.library,
       find: this.find,
-      preview: null,
+      preview: this.preview ? { ...this.preview, rect: this.previewRect() } : null,
       splitView: this.splitViewInfo(),
       splitDragging: this.splitDragging,
     }
@@ -286,7 +290,14 @@ export class BrowserShell {
   }
 
   private overlayVisible() {
-    return !!this.overlay && (!!this.commandBar || this.peek || !!this.library || this.splitDragging)
+    return !!this.overlay && (!!this.commandBar || this.peek || !!this.library || this.splitDragging || !!this.preview)
+  }
+
+  /** Keep floating things above the pages, in order: find bar, overlay, Peek card. */
+  private raiseFloating() {
+    if (this.find && this.findView) this.win.contentView.addChildView(this.findView)
+    if (this.overlayVisible()) this.win.contentView.addChildView(this.overlay!)
+    if (this.preview && this.previewView) this.win.contentView.addChildView(this.previewView)
   }
 
   /**
@@ -367,10 +378,11 @@ export class BrowserShell {
     }
     // Command bar, Library, split dragging: whole window. Peek sidebar: just its strip.
     this.overlay?.setBounds(
-      this.commandBar || this.library || this.splitDragging
+      this.commandBar || this.library || this.splitDragging || this.preview
         ? { x: 0, y: 0, width, height }
         : { x: 0, y: 0, width: Math.min(width, SIDEBAR_WIDTH + 16), height },
     )
+    this.previewView?.setBounds(this.previewRect())
     // Find bar: top-right corner of the page.
     if (this.findView) {
       // Includes transparent padding so the bar's shadow isn't clipped.
@@ -402,11 +414,7 @@ export class BrowserShell {
     }
     this.attached = ids
     for (const tid of ids) this.win.contentView.addChildView(this.views.get(tid)!)
-    // Keep the find bar and overlay (command bar / peek sidebar) on top.
-    if (ids.length) {
-      if (this.find && this.findView) this.win.contentView.addChildView(this.findView)
-      if (this.overlayVisible()) this.win.contentView.addChildView(this.overlay!)
-    }
+    if (ids.length) this.raiseFloating()
     this.layout()
   }
 
@@ -605,6 +613,13 @@ export class BrowserShell {
           },
         }
       }
+      const opener = this.tab(id)
+      // ⇧-click, and new-tab links from pinned tabs / favorites (Arc behavior), open in Peek.
+      const fromPinned = opener && opener.kind !== 'today' && this.state.settings.peekFromPinned
+      if (disposition === 'new-window' || (fromPinned && (disposition === 'foreground-tab' || disposition === 'background-tab'))) {
+        this.openPreview(url, this.partitionOf(opener ?? this.activeTab()!))
+        return { action: 'deny' }
+      }
       if (disposition === 'background-tab') {
         this.openTab(url, { activate: false, afterTabId: id })
         return { action: 'deny' }
@@ -703,6 +718,7 @@ export class BrowserShell {
     const tab = this.tab(id)
     if (!tab) return
     if (id !== this.state.activeTabId) this.closeFind()
+    this.closePreview()
     // Selecting a tab from another space (command bar, archive, extension) switches to it.
     const space = this.space()
     const tabSpace = spaceById(this.state, tab.spaceId)
@@ -1141,6 +1157,7 @@ export class BrowserShell {
   openCommandBar(mode: 'new' | 'edit') {
     const active = this.activeTab()
     if (mode === 'edit' && !active) mode = 'new'
+    this.closePreview()
     this.peek = false
     this.library = null
     this.commandBar = { mode, initialInput: mode === 'edit' && active ? active.url : '' }
@@ -1387,11 +1404,112 @@ export class BrowserShell {
     this.emitNow()
   }
 
+  // ───────────────────────────── Peek (link preview) ─────────────────────────────
+
+  private previewRect(): Electron.Rectangle {
+    const box = this.contentBox()
+    const margin = Math.max(24, Math.round(box.width * 0.06))
+    const toolbar = 52
+    return {
+      x: box.x + margin,
+      y: box.y + toolbar,
+      width: Math.max(200, box.width - margin * 2),
+      height: Math.max(200, box.height - toolbar - margin / 2),
+    }
+  }
+
+  /** Show `url` in a floating card over the page (Arc's Peek). */
+  openPreview(url: string, partition: string) {
+    if (this.commandBar) this.closeCommandBar()
+    if (this.library) this.closeLibrary()
+    this.closeFind()
+    if (this.previewView && this.previewPartition !== partition) this.destroyPreview()
+    if (!this.previewView) {
+      const view = new WebContentsView({ webPreferences: { partition, sandbox: true, contextIsolation: true, nodeIntegration: false } })
+      view.setBackgroundColor('#ffffff')
+      view.setBorderRadius(VIEW_RADIUS)
+      const wc = view.webContents
+      const sync = () => {
+        if (!this.preview || wc.isDestroyed()) return
+        this.preview.url = wc.getURL() || this.preview.url
+        this.preview.title = wc.getTitle()
+        this.preview.loading = wc.isLoading()
+        this.preview.canGoBack = wc.navigationHistory.canGoBack()
+        this.emit(false)
+      }
+      wc.on('did-start-loading', sync)
+      wc.on('did-stop-loading', sync)
+      wc.on('did-navigate', sync)
+      wc.on('did-navigate-in-page', sync)
+      wc.on('page-title-updated', sync)
+      wc.on('before-input-event', (e, input) => {
+        if (input.type === 'keyDown' && input.key === 'Escape') {
+          e.preventDefault()
+          this.closePreview()
+        }
+      })
+      // Links that would open yet another tab replace the preview instead.
+      wc.setWindowOpenHandler(({ url: next }) => {
+        void wc.loadURL(next).catch(() => {})
+        return { action: 'deny' }
+      })
+      attachWebContextMenu(this, wc)
+      this.previewView = view
+      this.previewPartition = partition
+    }
+    this.preview = { url, title: url, loading: true, canGoBack: false }
+    void this.previewView.webContents.loadURL(url).catch(() => {})
+    this.ensureOverlay()
+    this.raiseFloating()
+    this.layout()
+    this.previewView.webContents.focus()
+    this.emitNow()
+  }
+
+  private previewPartition = ''
+
+  /** The profile a page runs in: its tab's, Peek's, or the current space's. */
+  partitionForWebContents(wc: WebContents): string {
+    const id = this.tabIdForWebContents(wc)
+    const tab = id ? this.tab(id) : undefined
+    if (tab) return this.partitionOf(tab)
+    if (wc === this.previewView?.webContents) return this.previewPartition
+    return this.currentPartition()
+  }
+
+  /** Close Peek and free its page (memory matters on the Intel Mac). */
+  closePreview() {
+    if (!this.preview) return
+    this.preview = null
+    this.destroyPreview()
+    if (this.overlay && !this.overlayVisible()) this.win.contentView.removeChildView(this.overlay)
+    this.layout()
+    this.activeWebContents()?.focus()
+    this.emit(false)
+  }
+
+  private destroyPreview() {
+    const view = this.previewView
+    this.previewView = null
+    if (!view) return
+    if (!this.win.isDestroyed()) this.win.contentView.removeChildView(view)
+    if (!view.webContents.isDestroyed()) view.webContents.close()
+  }
+
+  /** "Open in New Tab": keep reading the previewed page as a normal tab. */
+  previewToTab() {
+    if (!this.preview) return
+    const url = this.previewView?.webContents.getURL() || this.preview.url
+    this.closePreview()
+    this.openTab(url, { afterTabId: this.state.activeTabId ?? undefined })
+  }
+
   // ───────────────────────────── find in page ─────────────────────────────
 
   openFind() {
     const wc = this.activeWebContents()
     if (!wc || this.commandBar || this.library) return
+    this.closePreview()
     this.find ??= { query: '', active: 0, total: 0, focusToken: 0 }
     this.find.focusToken++
     if (!this.findView) {
@@ -1446,6 +1564,7 @@ export class BrowserShell {
   // ───────────────────────────── Library (History / Downloads / Settings) ─────────────────────────────
 
   openLibrary(tab: LibraryTab) {
+    this.closePreview()
     this.commandBar = null
     this.peek = false
     this.closeFind()
@@ -1488,6 +1607,9 @@ export class BrowserShell {
     if ([0, 5, 15, 30, 60].includes(Number(patch.sleepAfterMinutes))) clean.sleepAfterMinutes = Number(patch.sleepAfterMinutes)
     if ([0, 12, 24, 168, 720].includes(Number(patch.archiveAfterHours))) clean.archiveAfterHours = Number(patch.archiveAfterHours)
     if (typeof patch.preferH264 === 'boolean') clean.preferH264 = patch.preferH264
+    if (typeof patch.peekFromPinned === 'boolean') clean.peekFromPinned = patch.peekFromPinned
+    if (typeof patch.littleArcForLinks === 'boolean') clean.littleArcForLinks = patch.littleArcForLinks
+    if (patch.appearance === 'system' || patch.appearance === 'light' || patch.appearance === 'dark') clean.appearance = patch.appearance
     if (Object.keys(clean).length) this.updateSettings(clean)
   }
 
@@ -1740,6 +1862,12 @@ export class BrowserShell {
         return this.resizeSplit(String(action.id), Number(action.ratio))
       case 'split.drag':
         return this.setSplitDragging(!!action.active)
+      case 'preview.close':
+        return this.closePreview()
+      case 'preview.toTab':
+        return this.previewToTab()
+      case 'preview.back':
+        return this.previewView?.webContents.navigationHistory.goBack()
       case 'find.open':
         return this.openFind()
       case 'find.query':
