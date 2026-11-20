@@ -26,13 +26,18 @@ let extensionsReady = false
 const pendingUrls: string[] = []
 
 function openExternalUrl(url: string) {
-  if (shell && extensionsReady) {
-    shell.openTab(url)
-    if (shell.win.isMinimized()) shell.win.restore()
-    shell.win.focus()
-  } else {
+  if (!shell || !extensionsReady) {
     pendingUrls.push(url)
+    return
   }
+  // Like Arc: links from other apps open in a Little Arc window (setting).
+  if (shell.settings.littleArcForLinks) {
+    shell.openLittle(url)
+    return
+  }
+  shell.openTab(url)
+  if (shell.win.isMinimized()) shell.win.restore()
+  shell.win.focus()
 }
 
 if (!app.requestSingleInstanceLock()) {
@@ -137,8 +142,10 @@ async function start() {
     return shell.query(q)
   })
   ipcMain.on(IPC.action, (event, action: Action) => {
-    if (!shell || !shell.isUIWebContents(event.sender)) return
-    if (!action || typeof action !== 'object' || typeof action.type !== 'string') return
+    if (!shell || !action || typeof action !== 'object' || typeof action.type !== 'string') return
+    const little = shell.littleFor(event.sender)
+    if (little) return shell.handleLittleAction(little, action)
+    if (!shell.isUIWebContents(event.sender)) return
     shell.handleAction(action)
   })
 
@@ -175,7 +182,7 @@ async function start() {
     shell.openTab('https://chromewebstore.google.com/detail/bitwarden-password-manager/nngceckbapebfimnlniiiahkandclblb')
   }
   extensionsReady = true
-  for (const url of pendingUrls.splice(0)) shell.openTab(url)
+  for (const url of pendingUrls.splice(0)) openExternalUrl(url)
 
   app.on('activate', () => {
     if (!shell) {

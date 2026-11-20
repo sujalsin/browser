@@ -1504,3 +1504,84 @@ html[data-surface='find'] body {
   color: var(--text-dim);
   white-space: nowrap;
 }
+
+/* ───────────── Little Arc ───────────── */
+
+html[data-surface='little'] body {
+  background: var(--frame);
+}
+
+.little {
+  height: 100%;
+  --frame: color-mix(in oklab, var(--space) 22%, var(--base));
+  background: var(--frame);
+}
+
+.little-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 44px;
+  padding: 0 8px;
+  -webkit-app-region: drag;
+}
+
+.little-bar > * {
+  -webkit-app-region: no-drag;
+}
+
+.little-lights {
+  width: 64px;
+  flex-shrink: 0;
+  -webkit-app-region: drag;
+}
+
+.little:not(.darwin) .little-lights {
+  width: 0;
+}
+
+.little-url,
+.little-input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--hover);
+  border: 0;
+  padding: 0 10px;
+  font: inherit;
+  color: var(--text);
+}
+
+.little-url {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+}
+
+.little-input {
+  outline: 2px solid color-mix(in oklab, var(--space) 60%, transparent);
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.little-title {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.little-host {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.little-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 4px;
+}

@@ -1,4 +1,4 @@
-import type { Action, Query, UIState } from '../shared/types'
+import type { Action, LittleState, Query, UIState } from '../shared/types'
 
 declare global {
   interface Window {
@@ -7,6 +7,7 @@ declare global {
       dispatch(action: Action): void
       query<T = unknown>(q: Query): Promise<T>
       onState(cb: (state: UIState) => void): () => void
+      onLittleState(cb: (state: LittleState) => void): () => void
     }
   }
 }

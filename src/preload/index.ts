@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { injectBrowserAction } from 'electron-chrome-extensions/browser-action'
-import { IPC, type Action, type Query, type UIState } from '../shared/types'
+import { IPC, type Action, type LittleState, type Query, type UIState } from '../shared/types'
 
 // Defines the <browser-action-list> element used to show extension buttons.
 injectBrowserAction()
@@ -13,6 +13,11 @@ const api = {
     const listener = (_e: Electron.IpcRendererEvent, state: UIState) => cb(state)
     ipcRenderer.on(IPC.state, listener)
     return () => ipcRenderer.removeListener(IPC.state, listener)
+  },
+  onLittleState: (cb: (state: LittleState) => void): (() => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, state: LittleState) => cb(state)
+    ipcRenderer.on(IPC.littleState, listener)
+    return () => ipcRenderer.removeListener(IPC.littleState, listener)
   },
 }
 

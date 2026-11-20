@@ -50,6 +50,7 @@ import { ARC_DEFAULT_PROFILE, applyArcPlan, arcHistoryPath, countPlan, parseArcS
 import type { BrowserDB } from './db'
 import type { Downloads } from './downloads'
 import { forgetPermission } from './permissions'
+import { LittleWindow } from './little'
 import { Shields } from './shields'
 import { flushState, saveState } from './store'
 
@@ -1468,6 +1469,59 @@ export class BrowserShell {
 
   private previewPartition = ''
 
+  // ───────────────────────────── Little Arc ─────────────────────────────
+
+  private littles = new Set<LittleWindow>()
+
+  /** ⌥⌘N, or a link from another app: a small window for a quick look. */
+  openLittle(url?: string) {
+    const space = this.space()
+    const little = new LittleWindow(
+      {
+        rendererUrl: this.rendererUrl,
+        partition: space.partition,
+        spaceName: space.name,
+        color: space.color,
+        searchEngine: () => this.state.searchEngine,
+        onToMain: (pageUrl) => {
+          this.openTab(pageUrl)
+          if (this.win.isMinimized()) this.win.restore()
+          this.win.focus()
+        },
+        onVisit: (pageUrl, title) => {
+          if (!pageUrl.startsWith('http')) return
+          this.record((db) => (title ? db.setTitle(pageUrl, title) : db.addVisit(pageUrl, '')))
+        },
+        wirePage: (wc) => attachWebContextMenu(this, wc),
+      },
+      url,
+    )
+    this.littles.add(little)
+    little.win.on('closed', () => this.littles.delete(little))
+    return little
+  }
+
+  /** The Little Arc window whose toolbar sent an action, if any. */
+  littleFor(wc: WebContents): LittleWindow | undefined {
+    for (const l of this.littles) if (l.isUI(wc)) return l
+    return undefined
+  }
+
+  handleLittleAction(little: LittleWindow, action: Action) {
+    switch (action.type) {
+      case 'little.navigate':
+        return little.navigate(String(action.input ?? '').slice(0, 4000))
+      case 'little.back':
+        return little.back()
+      case 'little.forward':
+        return little.forward()
+      case 'little.reload':
+        return little.reload()
+      case 'little.toMain':
+        return little.toMain()
+    }
+  }
+
   /** The profile a page runs in: its tab's, Peek's, or the current space's. */
   partitionForWebContents(wc: WebContents): string {
     const id = this.tabIdForWebContents(wc)
@@ -1862,6 +1916,8 @@ export class BrowserShell {
         return this.resizeSplit(String(action.id), Number(action.ratio))
       case 'split.drag':
         return this.setSplitDragging(!!action.active)
+      case 'little.open':
+        return void this.openLittle(typeof action.url === 'string' ? action.url : undefined)
       case 'preview.close':
         return this.closePreview()
       case 'preview.toTab':

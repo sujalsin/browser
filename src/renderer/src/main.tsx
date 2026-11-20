@@ -2,12 +2,14 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './App'
 import { FindBar } from './FindBar'
+import { Little } from './Little'
 import { Overlay } from './Overlay'
 
-// One bundle, three surfaces: the window (sidebar), the overlay (command bar,
-// Library, peek sidebar) and the find bar.
-const surface = location.hash === '#overlay' ? 'overlay' : location.hash === '#find' ? 'find' : 'window'
+// One bundle, four surfaces: the window (sidebar), the overlay (command bar,
+// Library, Peek, peek sidebar), the find bar, and Little Arc's toolbar.
+const surfaces = { '#overlay': 'overlay', '#find': 'find', '#little': 'little' } as const
+const surface = surfaces[location.hash as keyof typeof surfaces] ?? 'window'
 document.documentElement.dataset.surface = surface
 
-const root = surface === 'overlay' ? <Overlay /> : surface === 'find' ? <FindBar /> : <App />
+const root = { overlay: <Overlay />, find: <FindBar />, little: <Little />, window: <App /> }[surface]
 createRoot(document.getElementById('root')!).render(<StrictMode>{root}</StrictMode>)

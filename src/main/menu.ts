@@ -89,6 +89,7 @@ export function installMenu(getShell: () => BrowserShell | null): void {
       label: 'File',
       submenu: [
         { label: 'New Tab', accelerator: 'CmdOrCtrl+T', click: withShell((s) => s.openCommandBar('new')) },
+        { label: 'New Little Arc Window', accelerator: 'Alt+CmdOrCtrl+N', click: withShell((s) => void s.openLittle()) },
         { label: 'Open Location…', accelerator: 'CmdOrCtrl+L', click: withShell((s) => s.openCommandBar('edit')) },
         { label: 'Reopen Closed Tab', accelerator: 'CmdOrCtrl+Shift+T', click: withShell((s) => s.reopenClosed()) },
         { type: 'separator' },
