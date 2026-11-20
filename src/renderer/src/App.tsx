@@ -8,11 +8,17 @@ import { dispatch, useBrowserState } from './useBrowserState'
 /** CSS variables shared by the window UI and the overlay. */
 export function themeStyle(state: UIState): CSSProperties {
   const space = state.spaces.find((s) => s.id === state.activeSpaceId) ?? state.spaces[0]
-  return {
+  const style: Record<string, string> = {
     '--space': space.color,
     '--sidebar-width': `${SIDEBAR_WIDTH}px`,
     '--gap': `${VIEW_GAP}px`,
-  } as CSSProperties
+  }
+  // A second color turns the frame into a gradient, like Arc's space themes.
+  if (space.gradient) {
+    style['--frame-bg'] =
+      `linear-gradient(165deg, color-mix(in oklab, ${space.color} 30%, var(--base)), color-mix(in oklab, ${space.gradient} 30%, var(--base)))`
+  }
+  return style as CSSProperties
 }
 
 export function App() {

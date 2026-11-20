@@ -1,4 +1,4 @@
-import { app, ipcMain, session } from 'electron'
+import { app, ipcMain, nativeTheme, session } from 'electron'
 import { existsSync } from 'node:fs'
 import { join, parse } from 'node:path'
 import { ElectronChromeExtensions } from 'electron-chrome-extensions'
@@ -96,6 +96,8 @@ function applyH264(partition: string, on: boolean) {
 
 async function start() {
   const state = loadState()
+  // Light/dark for the browser UI and for pages that support it.
+  nativeTheme.themeSource = state.settings.appearance
   const rendererUrl = process.env.ELECTRON_RENDERER_URL ?? `file://${join(__dirname, '../renderer/index.html')}`
 
   // History, downloads and site permissions. A broken database must not stop the browser.
@@ -156,6 +158,7 @@ async function start() {
     created.downloads = downloads
     created.prepareSession = prepareSession
     created.onSettingsChanged = (settings) => {
+      nativeTheme.themeSource = settings.appearance
       for (const partition of new Set(s.spaces.map((sp) => sp.partition))) applyH264(partition, settings.preferH264)
       installMenu(() => shell)
     }

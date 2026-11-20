@@ -56,6 +56,9 @@ The Bitwarden button appears under the address pill in the sidebar.
 | ⌘[ / ⌘] / ⌘R | Back / forward / reload |
 | ⌘= / ⌘- / ⌘0 | Zoom in / out / reset |
 | ⌘F / ⌘G / ⇧⌘G | Find in page / next / previous |
+| ⌃⇧= / ⌃⇧- | Split view with a new tab / exit split view |
+| ⌥⌘N | New Little Arc window |
+| ⇧-click a link | Open it in Peek |
 | ⌘Y | History |
 | ⇧⌘J | Downloads |
 | ⌘, | Settings |
@@ -100,6 +103,21 @@ over the page, like Arc.
   their colors), pinned tabs, folders, Today tabs and Favorites, plus 90 days of browsing history.
   Arc profiles become separate profiles here. Passwords and cookies aren't imported (Bitwarden
   has your passwords).
+
+## Polish
+
+- **Split view** — right-click a tab → Open in Split View, or ⌃⇧= to pick a new page for the right
+  side. Drag the divider to resize (double-click resets), click a side to make it active.
+  ⌃⇧- exits; View → Swap Split Sides.
+- **Peek** — links from pinned tabs and favorites that would open a new tab show in a floating
+  preview instead, like Arc (Settings to turn off). ⇧-click any link, or right-click → Open Link in
+  Peek. "Open in New Tab" keeps it; Esc or a click outside closes it.
+- **Little Arc** (⌥⌘N) — a small window for a quick search. Links from other apps open there too
+  (Settings to turn off). "Open in Browser" moves the page into the main window.
+- **Boosts** — your own CSS (and optional JavaScript) for a site, in the Library → Boosts.
+  Right-click anything on a page → **Hide This Element** to zap it for good.
+- **Themes** — Settings → Appearance: light, dark or match the system (sites with a dark mode
+  follow it), and a color — or a two-color gradient — for each space.
 
 ## Shields (ad and tracker blocking)
 

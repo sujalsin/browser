@@ -4,7 +4,7 @@ import { dirname } from 'node:path'
 import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
-import { SIDEBAR_WIDTH, VIEW_GAP, VIEW_RADIUS } from '../shared/constants'
+import { SIDEBAR_WIDTH, SPACE_COLORS, VIEW_GAP, VIEW_RADIUS } from '../shared/constants'
 import type {
   Action,
   AppInfo,
@@ -67,18 +67,6 @@ const ARCHIVE_IN_SNAPSHOT = 100
 /** Where Arc keeps its sidebar (spaces, pinned tabs, favorites). */
 export const ARC_SIDEBAR_FILE = join(homedir(), 'Library', 'Application Support', 'Arc', 'StorableSidebar.json')
 
-/** Arc-like space colors. */
-export const SPACE_COLORS = [
-  { name: 'Purple', value: '#7c6cf2' },
-  { name: 'Blue', value: '#3b82f6' },
-  { name: 'Teal', value: '#14b8a6' },
-  { name: 'Green', value: '#22c55e' },
-  { name: 'Yellow', value: '#eab308' },
-  { name: 'Orange', value: '#f97316' },
-  { name: 'Red', value: '#ef4444' },
-  { name: 'Pink', value: '#ec4899' },
-  { name: 'Gray', value: '#64748b' },
-]
 
 interface OpenOptions {
   activate?: boolean
@@ -975,6 +963,17 @@ export class BrowserShell {
     this.emit()
   }
 
+  /** Space color and optional gradient color (Settings → Appearance). */
+  updateSpaceTheme(id: string, color?: string, gradient?: string | null) {
+    const space = spaceById(this.state, id)
+    if (!space) return
+    const hex = (v: unknown) => typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v)
+    if (hex(color)) space.color = color!.toLowerCase()
+    if (gradient === null) delete space.gradient
+    else if (hex(gradient)) space.gradient = gradient!.toLowerCase()
+    this.emit()
+  }
+
   renameSpace(id: string, name: string) {
     const space = spaceById(this.state, id)
     if (space && name.trim()) space.name = name.trim().slice(0, 40)
@@ -1015,6 +1014,7 @@ export class BrowserShell {
     const ownProfile = space.partition !== this.state.spaces[0].partition
     const items: Electron.MenuItemConstructorOptions[] = [
       { label: 'Rename Space', click: () => ((this.editing = { type: 'space', id }), this.emit(false)) },
+      { label: 'Theme…', click: () => this.openLibrary('settings') },
       {
         label: 'Color',
         submenu: SPACE_COLORS.map((c) => ({
@@ -1988,6 +1988,8 @@ export class BrowserShell {
         return this.setSplitDragging(!!action.active)
       case 'little.open':
         return void this.openLittle(typeof action.url === 'string' ? action.url : undefined)
+      case 'space.update':
+        return this.updateSpaceTheme(String(action.id), action.color, action.gradient)
       case 'boost.save':
         this.saveBoost(action.boost)
         return

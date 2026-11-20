@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { normalizeDomain } from '../../shared/boosts'
+import { SPACE_COLORS } from '../../shared/constants'
 import type { AppInfo, Boost, DownloadInfo, HistoryItem, LibraryTab, SearchEngineId, SitePermission, UIState } from '../../shared/types'
 import { SEARCH_ENGINES, displayHost } from '../../shared/url'
 import { Favicon } from './Favicon'
@@ -373,6 +374,73 @@ function SettingsView({ state }: { state: UIState }) {
             <button className="lib-button" onClick={() => dispatch({ type: 'arc.import' })}>
               Import…
             </button>
+          </Row>
+        </Section>
+
+        <Section title="Appearance">
+          <Row label="Appearance" hint="Also applies to websites that have a dark mode.">
+            <select
+              className="lib-select"
+              value={s.appearance}
+              onChange={(e) => dispatch({ type: 'settings.update', patch: { appearance: e.target.value as 'system' | 'light' | 'dark' } })}
+            >
+              <option value="system">Match System</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </Row>
+          {state.spaces.map((sp) => (
+            <div key={sp.id} className="set-row space-theme">
+              <div className="set-label">
+                <span>{sp.name}</span>
+                <small>{sp.gradient ? 'Gradient' : 'Color'}</small>
+              </div>
+              <div className="swatches">
+                {SPACE_COLORS.map((c) => (
+                  <button
+                    key={c.value}
+                    className={`swatch ${sp.color === c.value ? 'on' : ''}`}
+                    title={c.name}
+                    style={{ background: c.value }}
+                    onClick={() => dispatch({ type: 'space.update', id: sp.id, color: c.value })}
+                  />
+                ))}
+              </div>
+              <input
+                type="color"
+                className="color-input"
+                title="Custom color"
+                value={sp.color}
+                onChange={(e) => dispatch({ type: 'space.update', id: sp.id, color: e.target.value })}
+              />
+              {sp.gradient ? (
+                <>
+                  <input
+                    type="color"
+                    className="color-input"
+                    title="Gradient color"
+                    value={sp.gradient}
+                    onChange={(e) => dispatch({ type: 'space.update', id: sp.id, gradient: e.target.value })}
+                  />
+                  <button className="lib-button small" onClick={() => dispatch({ type: 'space.update', id: sp.id, gradient: null })}>
+                    Solid
+                  </button>
+                </>
+              ) : (
+                <button
+                  className="lib-button small"
+                  onClick={() => dispatch({ type: 'space.update', id: sp.id, gradient: SPACE_COLORS[(SPACE_COLORS.findIndex((c) => c.value === sp.color) + 2) % SPACE_COLORS.length].value })}
+                >
+                  Gradient
+                </button>
+              )}
+            </div>
+          ))}
+          <Row label="Open links from pinned tabs in Peek" hint="Links that would open a new tab show in a preview instead, like Arc.">
+            <Toggle label="Peek from pinned tabs" on={s.peekFromPinned} onChange={(v) => dispatch({ type: 'settings.update', patch: { peekFromPinned: v } })} />
+          </Row>
+          <Row label="Open links from other apps in Little Arc" hint="A small window you can move into the browser with one click.">
+            <Toggle label="Little Arc for links" on={s.littleArcForLinks} onChange={(v) => dispatch({ type: 'settings.update', patch: { littleArcForLinks: v } })} />
           </Row>
         </Section>
 

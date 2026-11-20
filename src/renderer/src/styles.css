@@ -54,6 +54,10 @@ html[data-surface='window'] body {
   background: var(--frame);
 }
 
+html[data-surface='window'] #root {
+  background: var(--frame);
+}
+
 html[data-surface='overlay'] body {
   background: transparent;
 }
@@ -71,7 +75,7 @@ button {
 .window {
   position: relative;
   height: 100%;
-  background: var(--frame);
+  background: var(--frame-bg, var(--frame));
 }
 
 .content {
@@ -624,7 +628,7 @@ kbd {
   bottom: var(--gap);
   width: calc(var(--sidebar-width) - var(--gap));
   border-radius: 12px;
-  background: var(--frame);
+  background: var(--frame-bg, var(--frame));
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22), 0 0 0 0.5px var(--panel-border);
   overflow: hidden;
   animation: peek-in 120ms ease-out;
@@ -980,7 +984,7 @@ html[data-surface='find'] body {
   width: 200px;
   flex-shrink: 0;
   padding: 14px 8px;
-  background: var(--frame);
+  background: var(--frame-bg, var(--frame));
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -1725,4 +1729,35 @@ textarea.code.js {
   place-items: center;
   margin-left: auto;
   color: var(--space);
+}
+
+/* ───────────── space themes ───────────── */
+
+.space-theme {
+  flex-wrap: wrap;
+}
+
+.swatches {
+  display: flex;
+  gap: 4px;
+}
+
+.swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+}
+
+.swatch.on {
+  box-shadow: 0 0 0 2px var(--panel-solid), 0 0 0 4px var(--text-dim);
+}
+
+.color-input {
+  width: 30px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  background: none;
 }
