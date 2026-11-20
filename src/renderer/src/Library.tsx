@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import type { AppInfo, DownloadInfo, HistoryItem, LibraryTab, SearchEngineId, SitePermission, UIState } from '../../shared/types'
+import { normalizeDomain } from '../../shared/boosts'
+import type { AppInfo, Boost, DownloadInfo, HistoryItem, LibraryTab, SearchEngineId, SitePermission, UIState } from '../../shared/types'
 import { SEARCH_ENGINES, displayHost } from '../../shared/url'
 import { Favicon } from './Favicon'
 import { Icon, type IconName } from './Icon'
@@ -8,6 +9,7 @@ import { dispatch } from './useBrowserState'
 const TABS: { id: LibraryTab; label: string; icon: IconName; key: string }[] = [
   { id: 'history', label: 'History', icon: 'history', key: '⌘Y' },
   { id: 'downloads', label: 'Downloads', icon: 'download', key: '⇧⌘J' },
+  { id: 'boosts', label: 'Boosts', icon: 'boost', key: '' },
   { id: 'settings', label: 'Settings', icon: 'settings', key: '⌘,' },
 ]
 
@@ -33,7 +35,7 @@ export function Library({ state }: { state: UIState }) {
               <Icon name={t.icon} size={16} />
               <span>{t.label}</span>
               {t.id === 'downloads' && state.downloads.some((d) => d.state === 'progressing') && <span className="nav-dot" />}
-              <kbd className="nav-key">{t.key}</kbd>
+              {t.key && <kbd className="nav-key">{t.key}</kbd>}
             </button>
           ))}
         </nav>
@@ -43,6 +45,7 @@ export function Library({ state }: { state: UIState }) {
           </button>
           {tab === 'history' && <HistoryView />}
           {tab === 'downloads' && <DownloadsView state={state} />}
+          {tab === 'boosts' && <BoostsView state={state} />}
           {tab === 'settings' && <SettingsView state={state} />}
         </section>
       </div>
@@ -477,6 +480,111 @@ function SettingsView({ state }: { state: UIState }) {
             Browser {info.version} · Chromium {info.chrome} · Electron {info.electron}
           </p>
         )}
+      </div>
+    </div>
+  )
+}
+
+// ───────────────────────────── Boosts ─────────────────────────────
+
+function BoostsView({ state }: { state: UIState }) {
+  const active = state.tabs.find((t) => t.id === state.activeTabId)
+  const [selected, setSelected] = useState<string | null>(state.boosts[0]?.id ?? null)
+  const [newDomain, setNewDomain] = useState(() => normalizeDomain(active?.url ?? '') ?? '')
+  const boost = state.boosts.find((b) => b.id === selected) ?? null
+
+  // A Boost just created from the form: select it once it arrives.
+  const pending = useRef<string | null>(null)
+  useEffect(() => {
+    if (!pending.current) return
+    const made = state.boosts.find((b) => b.domain === pending.current)
+    if (made) {
+      setSelected(made.id)
+      pending.current = null
+    }
+  }, [state.boosts])
+
+  const create = () => {
+    const domain = normalizeDomain(newDomain)
+    if (!domain) return
+    const existing = state.boosts.find((b) => b.domain === domain)
+    if (existing) return setSelected(existing.id)
+    pending.current = domain
+    dispatch({ type: 'boost.save', boost: { id: '', domain, enabled: true, css: '', js: '', updated: 0 } })
+  }
+
+  return (
+    <div className="lib-page">
+      <header className="lib-header">
+        <h2>Boosts</h2>
+        <div className="lib-search">
+          <Icon name="boost" size={14} />
+          <input value={newDomain} onChange={(e) => setNewDomain(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && create()} placeholder="Site, e.g. youtube.com" spellCheck={false} />
+        </div>
+        <button className="lib-button" disabled={!normalizeDomain(newDomain)} onClick={create}>
+          New Boost
+        </button>
+      </header>
+      <div className="boosts">
+        <ul className="boost-list">
+          {state.boosts.length === 0 && (
+            <li className="lib-empty small">
+              Boosts restyle a site with your own CSS (and optional JavaScript). Right-click anything on a page → <b>Hide This Element</b> to start one.
+            </li>
+          )}
+          {state.boosts.map((b) => (
+            <li key={b.id} className={`boost-item ${b.id === selected ? 'active' : ''}`} onClick={() => setSelected(b.id)}>
+              <span className={`boost-dot ${b.enabled ? 'on' : ''}`} />
+              <span className="lib-title">{b.domain}</span>
+            </li>
+          ))}
+        </ul>
+        {boost ? <BoostEditor key={boost.id + boost.updated} boost={boost} /> : <div className="boost-editor empty" />}
+      </div>
+    </div>
+  )
+}
+
+function BoostEditor({ boost }: { boost: Boost }) {
+  const [css, setCss] = useState(boost.css)
+  const [js, setJs] = useState(boost.js)
+  const dirty = css !== boost.css || js !== boost.js
+  const save = (patch: Partial<Boost> = {}) => dispatch({ type: 'boost.save', boost: { ...boost, css, js, ...patch } })
+  return (
+    <div className="boost-editor">
+      <div className="boost-head">
+        <span className="boost-domain">{boost.domain}</span>
+        <span className="set-label small">and its subdomains</span>
+        <span className="spacer" />
+        <Toggle label="Boost enabled" on={boost.enabled} onChange={(v) => save({ enabled: v })} />
+      </div>
+      <label className="boost-label">CSS</label>
+      <textarea
+        className="code"
+        value={css}
+        spellCheck={false}
+        placeholder={'/* e.g. hide YouTube Shorts */\nytd-reel-shelf-renderer { display: none !important; }'}
+        onChange={(e) => setCss(e.target.value)}
+        onKeyDown={(e) => (e.metaKey || e.ctrlKey) && e.key === 's' && (e.preventDefault(), save())}
+      />
+      <label className="boost-label">
+        JavaScript <small>runs on every page load of this site — only paste code you understand</small>
+      </label>
+      <textarea className="code js" value={js} spellCheck={false} placeholder="// optional" onChange={(e) => setJs(e.target.value)} />
+      <div className="boost-actions">
+        <button
+          className="lib-button"
+          onClick={() => {
+            if (window.confirm(`Delete the Boost for ${boost.domain}?`)) dispatch({ type: 'boost.delete', id: boost.id })
+          }}
+        >
+          Delete
+        </button>
+        <span className="spacer" />
+        {dirty && <span className="set-label small">Unsaved · ⌘S</span>}
+        <button className="lib-button primary" disabled={!dirty} onClick={() => save()}>
+          Save
+        </button>
       </div>
     </div>
   )

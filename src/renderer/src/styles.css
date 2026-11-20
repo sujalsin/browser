@@ -1585,3 +1585,144 @@ html[data-surface='little'] body {
   gap: 5px;
   margin-left: 4px;
 }
+
+/* ───────────── Boosts ───────────── */
+
+.boosts {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.boost-list {
+  width: 220px;
+  flex-shrink: 0;
+  list-style: none;
+  margin: 0;
+  padding: 10px 8px;
+  border-right: 1px solid var(--divider);
+  overflow-y: auto;
+}
+
+.lib-empty.small {
+  font-size: 12px;
+  margin: 12px 6px;
+  text-align: left;
+  line-height: 1.5;
+}
+
+.boost-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.boost-item:hover {
+  background: var(--hover);
+}
+
+.boost-item.active {
+  background: var(--active-bg);
+  box-shadow: var(--active-shadow);
+}
+
+.boost-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--divider);
+}
+
+.boost-dot.on {
+  background: var(--space);
+}
+
+.boost-editor {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 20px 16px;
+}
+
+.boost-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.boost-domain {
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.set-label.small {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.boost-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.boost-label small {
+  font-weight: 400;
+  margin-left: 6px;
+}
+
+textarea.code {
+  flex: 2;
+  min-height: 90px;
+  resize: none;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid var(--divider);
+  background: var(--panel);
+  color: var(--text);
+  font: 12px/1.5 ui-monospace, 'SF Mono', Menlo, monospace;
+  user-select: text;
+  -webkit-user-select: text;
+  outline: none;
+}
+
+textarea.code:focus {
+  border-color: var(--space);
+}
+
+textarea.code.js {
+  flex: 1;
+}
+
+.boost-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.lib-button.primary {
+  background: var(--space);
+  border-color: transparent;
+  color: white;
+}
+
+.lib-button:disabled {
+  opacity: 0.45;
+}
+
+.url-boost {
+  display: grid;
+  place-items: center;
+  margin-left: auto;
+  color: var(--space);
+}

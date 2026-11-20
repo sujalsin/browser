@@ -1,5 +1,6 @@
 import { createContext, useContext, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode, type WheelEvent } from 'react'
 import type { Folder, ListRef, Tab, UIState } from '../../shared/types'
+import { boostsFor } from '../../shared/boosts'
 import { displayHost } from '../../shared/url'
 import { Favicon } from './Favicon'
 import { Icon } from './Icon'
@@ -186,6 +187,11 @@ export function Sidebar({ state }: { state: UIState }) {
                 <>
                   {active.url.startsWith('https://') && <Icon name="lock" size={12} />}
                   <span className="url-text">{displayHost(active.url)}</span>
+                  {boostsFor(state.boosts, active.url).length > 0 && (
+                    <span className="url-boost" title="A Boost is active on this site">
+                      <Icon name="boost" size={12} />
+                    </span>
+                  )}
                 </>
               ) : (
                 <span className="url-placeholder">Search or enter URL…</span>

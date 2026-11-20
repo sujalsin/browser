@@ -77,6 +77,9 @@ export function attachWebContextMenu(shell: BrowserShell, wc: WebContents): void
       items.push({ type: 'separator' })
     }
 
+    if (/^https?:/.test(wc.getURL()) && !params.isEditable) {
+      items.push({ label: 'Hide This Element (Zap)', click: () => void shell.zapAt(wc, params.x, params.y) }, { type: 'separator' })
+    }
     items.push({ label: 'Inspect', click: () => wc.inspectElement(params.x, params.y) })
 
     Menu.buildFromTemplate(items).popup()

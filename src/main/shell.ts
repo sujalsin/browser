@@ -8,6 +8,7 @@ import { SIDEBAR_WIDTH, VIEW_GAP, VIEW_RADIUS } from '../shared/constants'
 import type {
   Action,
   AppInfo,
+  Boost,
   ClosedTab,
   CommandBarState,
   FindState,
@@ -23,6 +24,7 @@ import type {
 } from '../shared/types'
 import { IPC } from '../shared/types'
 import { SEARCH_ENGINES, displayHost, resolveInput } from '../shared/url'
+import { boostsFor, hideRule, normalizeDomain, selectorScript, wrapBoostScript } from '../shared/boosts'
 import { attachWebContextMenu } from './context-menu'
 import { getExtensions, setExtensionsShell } from './extensions'
 import {
@@ -573,6 +575,7 @@ export class BrowserShell {
     wc.on('before-mouse-event', (_e, mouse) => {
       if (mouse.type === 'mouseDown') focusPane()
     })
+    wc.on('dom-ready', () => void this.applyBoosts(wc, true))
     wc.on('found-in-page', (_e, result) => {
       if (!this.find || this.state.activeTabId !== id) return
       this.find.active = result.activeMatchOrdinal
@@ -1349,6 +1352,72 @@ export class BrowserShell {
     Menu.buildFromTemplate(items).popup({ window: this.win })
   }
 
+  // ───────────────────────────── Boosts ─────────────────────────────
+
+  /** CSS inserted into each page by Boosts, so it can be replaced when a Boost is edited. */
+  private boostCss = new Map<number, string[]>()
+
+  /** Apply matching Boosts: CSS always; JavaScript only on page load (`withJs`). */
+  private async applyBoosts(wc: WebContents, withJs: boolean) {
+    if (wc.isDestroyed()) return
+    const old = this.boostCss.get(wc.id) ?? []
+    this.boostCss.delete(wc.id)
+    for (const key of old) await wc.removeInsertedCSS(key).catch(() => {})
+    const matches = boostsFor(this.state.boosts, wc.getURL())
+    const keys: string[] = []
+    for (const b of matches) {
+      if (b.css.trim()) keys.push(await wc.insertCSS(b.css, { cssOrigin: 'user' }).catch(() => ''))
+      if (withJs && b.js.trim()) void wc.executeJavaScript(wrapBoostScript(b.js)).catch(() => {})
+    }
+    if (keys.length) this.boostCss.set(wc.id, keys.filter(Boolean))
+  }
+
+  /** Re-apply Boost CSS to every open page (after an edit), without re-running scripts. */
+  private refreshBoosts() {
+    for (const view of this.views.values()) void this.applyBoosts(view.webContents, false)
+    if (this.previewView) void this.applyBoosts(this.previewView.webContents, false)
+  }
+
+  saveBoost(input: Boost): Boost | null {
+    const domain = normalizeDomain(String(input.domain ?? ''))
+    if (!domain) return null
+    const clean: Boost = {
+      id: typeof input.id === 'string' && input.id ? input.id : randomUUID(),
+      domain,
+      enabled: input.enabled !== false,
+      css: String(input.css ?? '').slice(0, 100_000),
+      js: String(input.js ?? '').slice(0, 100_000),
+      updated: Date.now(),
+    }
+    const i = this.state.boosts.findIndex((b) => b.id === clean.id)
+    if (i >= 0) this.state.boosts[i] = clean
+    else this.state.boosts.push(clean)
+    this.emit()
+    this.refreshBoosts()
+    return clean
+  }
+
+  deleteBoost(id: string) {
+    this.state.boosts = this.state.boosts.filter((b) => b.id !== id)
+    this.emit()
+    this.refreshBoosts()
+  }
+
+  /** Zap: hide the element under the pointer on this site, for good (editable in Boosts). */
+  async zapAt(wc: WebContents, x: number, y: number) {
+    const selector = (await wc.executeJavaScript(selectorScript(x, y)).catch(() => null)) as string | null
+    const url = wc.getURL()
+    const domain = Shields.siteOf(url) ?? normalizeDomain(url)
+    if (!selector || !domain) return
+    const existing = this.state.boosts.find((b) => b.domain === domain)
+    const rule = hideRule(selector)
+    if (existing) {
+      if (!existing.css.includes(rule)) this.saveBoost({ ...existing, enabled: true, css: `${existing.css.trimEnd()}\n${rule}\n`.trimStart() })
+    } else {
+      this.saveBoost({ id: '', domain, enabled: true, css: `/* Zapped elements */\n${rule}\n`, js: '', updated: 0 })
+    }
+  }
+
   // ───────────────────────────── split view ─────────────────────────────
 
   /** Show `tabId` side by side with the active tab (active on the left). */
@@ -1440,6 +1509,7 @@ export class BrowserShell {
       }
       wc.on('did-start-loading', sync)
       wc.on('did-stop-loading', sync)
+      wc.on('dom-ready', () => void this.applyBoosts(wc, true))
       wc.on('did-navigate', sync)
       wc.on('did-navigate-in-page', sync)
       wc.on('page-title-updated', sync)
@@ -1918,6 +1988,11 @@ export class BrowserShell {
         return this.setSplitDragging(!!action.active)
       case 'little.open':
         return void this.openLittle(typeof action.url === 'string' ? action.url : undefined)
+      case 'boost.save':
+        this.saveBoost(action.boost)
+        return
+      case 'boost.delete':
+        return this.deleteBoost(String(action.id))
       case 'preview.close':
         return this.closePreview()
       case 'preview.toTab':
