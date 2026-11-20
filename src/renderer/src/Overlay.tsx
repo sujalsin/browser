@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { themeStyle } from './App'
 import { Sidebar } from './Sidebar'
 import { CommandBar } from './CommandBar'
+import { Library } from './Library'
 import { dispatch, useBrowserState } from './useBrowserState'
 
 /**
@@ -13,7 +14,7 @@ export function Overlay() {
   if (!state) return null
   return (
     <div className={`overlay-root ${state.platform}`} style={themeStyle(state)}>
-      {state.commandBar ? <CommandBar state={state} /> : state.peek ? <PeekSidebar state={state} /> : null}
+      {state.commandBar ? <CommandBar state={state} /> : state.library ? <Library state={state} /> : state.peek ? <PeekSidebar state={state} /> : null}
     </div>
   )
 }

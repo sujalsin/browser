@@ -119,7 +119,7 @@ alongside → revisit the engine choice before investing more.
 - **Phase 0.5 — Performance** ✅ done (requirement: must feel fast on the Intel Mac): idle tab sleeping with history kept, H.264 preference for Intel, batched UI updates, minified UI bundle, window shown before extensions finish loading, sidebar hover-reveal when hidden.
 - **Phase 2 — Shields** ✅ done (moved ahead of Phase 1 for Intel performance): Ghostery engine with uBlock Origin-compatible lists compiled on a worker thread and cached; network + cosmetic + scriptlet blocking; cookie banners; tracking-parameter stripping; HTTPS upgrade with fallback; per-site toggle; blocked count. Not yet: third-party cookie blocking, fingerprinting protection.
 - **Phase 1 — The Arc core** ✅ done: spaces (colors, optional separate profile, ⌃1–9, swipe), favorites per profile, folders in pinned and Today, drag and drop everywhere, auto-archive (12h default), rule-based Tidy (duplicates + group by site), Clear, cross-space ⌘T search. Data model is a tree (src/main/model.ts) with unit tests and automatic migration from v1.
-- **Phase 3 — Daily driver**: history, downloads, find, permissions UI, Arc import, settings.
+- **Phase 3 — Daily driver** ✅ done: history (node:sqlite + FTS5, 90-day retention, ⌘T suggestions), downloads manager, find in page, persisted per-profile site permissions, Library overlay (History / Downloads / Settings), Arc import (spaces, colors, pinned, folders, Today, favorites, profiles, history; format per Firefox's/Zen's Arc migrators).
 - **Phase 4 — Polish**: split view, Peek, Little Arc, Boosts, themes.
 
 ## Development

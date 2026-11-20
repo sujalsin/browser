@@ -62,6 +62,38 @@ export interface TabRuntime {
   error?: { code: number; description: string; url: string }
 }
 
+/** A page in history. */
+export interface HistoryItem {
+  url: string
+  title: string
+  favicon?: string | null
+  visitCount: number
+  lastVisit: number
+}
+
+export interface DownloadInfo {
+  id: string
+  url: string
+  filename: string
+  path: string
+  state: 'progressing' | 'completed' | 'cancelled' | 'interrupted'
+  paused: boolean
+  received: number
+  total: number
+  startedAt: number
+  endedAt?: number
+}
+
+/** A remembered Allow/Block answer to a site's permission request. */
+export interface SitePermission {
+  /** Profile (session partition) the decision applies to. */
+  partition: string
+  origin: string
+  permission: string
+  allowed: boolean
+  updated: number
+}
+
 export interface ArchivedTab {
   url: string
   title: string
@@ -146,6 +178,25 @@ export interface UIState extends PersistedState {
   activeShieldsOn: boolean
   /** A space or folder whose name is being edited inline (just created, or "Rename…"). */
   editing: { type: 'space' | 'folder'; id: string } | null
+  /** Recent downloads, newest first. */
+  downloads: DownloadInfo[]
+  /** A download finished since the Downloads list was last opened. */
+  downloadsUnseen: boolean
+  /** The Library (History / Downloads / Settings) overlay, when open. */
+  library: { tab: LibraryTab } | null
+  /** Find-in-page bar for the active tab, when open. */
+  find: FindState | null
+}
+
+export type LibraryTab = 'history' | 'downloads' | 'settings'
+
+export interface FindState {
+  query: string
+  /** 1-based index of the highlighted match, 0 if none. */
+  active: number
+  total: number
+  /** Bumped each time ⌘F is pressed, so the bar refocuses its input. */
+  focusToken: number
 }
 
 export interface CommandBarState {
@@ -174,6 +225,22 @@ export type Action =
   | { type: 'folder.create'; list: 'pinned' | 'today' }
   | { type: 'edit.cancel' }
   | { type: 'tabs.tidy' }
+  | { type: 'library.open'; tab: LibraryTab }
+  | { type: 'library.close' }
+  | { type: 'download.act'; id: string; op: 'pause' | 'resume' | 'cancel' | 'open' | 'show' | 'remove' | 'retry' }
+  | { type: 'downloads.clear' }
+  | { type: 'history.delete'; url: string }
+  | { type: 'history.clear'; since: number }
+  | { type: 'settings.update'; patch: Partial<Settings> }
+  | { type: 'searchEngine.set'; id: SearchEngineId }
+  | { type: 'shields.update'; patch: Partial<ShieldsSettings> }
+  | { type: 'permissions.forget'; partition: string; origin: string; permission: string }
+  | { type: 'browser.makeDefault' }
+  | { type: 'data.clear'; what: 'cache' | 'cookies' }
+  | { type: 'arc.import' }
+  | { type: 'find.open' }
+  | { type: 'find.query'; text: string; forward?: boolean; next?: boolean }
+  | { type: 'find.close' }
   | { type: 'tab.contextMenu'; id: string }
   | { type: 'nav.back' }
   | { type: 'nav.forward' }
@@ -187,8 +254,25 @@ export type Action =
   | { type: 'tabs.clearToday' }
   | { type: 'archive.restore'; index: number }
 
+/** Requests from the UI that return data (too big or too dynamic for UIState). */
+export type Query =
+  | { type: 'history.suggest'; input: string }
+  | { type: 'history.list'; query?: string; before?: number }
+  | { type: 'permissions.list' }
+  | { type: 'app.info' }
+
+export interface AppInfo {
+  version: string
+  electron: string
+  chrome: string
+  isDefaultBrowser: boolean
+  arcFound: boolean
+  historyCount: number
+}
+
 export const IPC = {
   state: 'browser:state',
   action: 'browser:action',
   getState: 'browser:get-state',
+  query: 'browser:query',
 } as const

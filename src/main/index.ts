@@ -2,10 +2,12 @@ import { app, ipcMain, session } from 'electron'
 import { existsSync } from 'node:fs'
 import { join, parse } from 'node:path'
 import { ElectronChromeExtensions } from 'electron-chrome-extensions'
-import { IPC, type Action, type PersistedState } from '../shared/types'
+import { IPC, type Action, type PersistedState, type Query } from '../shared/types'
 import { setupExtensions } from './extensions'
 import { installMenu } from './menu'
-import { installPermissionHandlers } from './permissions'
+import { Downloads } from './downloads'
+import { installPermissionHandlers, loadPermissions } from './permissions'
+import { BrowserDB } from './db'
 import { BrowserShell } from './shell'
 import { Shields } from './shields'
 import { flushState, loadState } from './store'
@@ -19,6 +21,7 @@ app.userAgentFallback = app.userAgentFallback.replace(/\s(\S+)\/(\S+)/g, (token,
 )
 
 let shell: BrowserShell | null = null
+let db: BrowserDB | null = null
 let extensionsReady = false
 const pendingUrls: string[] = []
 
@@ -48,24 +51,28 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(start)
 }
 
+/** Paths of downloads in progress, so two at once never get the same name. */
+const reservedPaths = new Set<string>()
+
 function uniquePath(dir: string, filename: string): string {
   const { name, ext } = parse(filename)
   let candidate = join(dir, filename)
-  for (let i = 1; existsSync(candidate); i++) candidate = join(dir, `${name} (${i})${ext}`)
+  for (let i = 1; existsSync(candidate) || reservedPaths.has(candidate); i++) candidate = join(dir, `${name} (${i})${ext}`)
+  reservedPaths.add(candidate)
   return candidate
 }
 
-function setupSession(partition: string) {
+function setupSession(partition: string, downloads: Downloads) {
   const ses = session.fromPartition(partition)
   ses.setUserAgent(app.userAgentFallback)
-  installPermissionHandlers(ses)
+  installPermissionHandlers(ses, partition)
   ses.setSpellCheckerLanguages(['en-US'])
   // Save downloads straight to ~/Downloads, like other browsers.
   ses.on('will-download', (_e, item) => {
-    item.setSavePath(uniquePath(app.getPath('downloads'), item.getFilename()))
-    item.once('done', (_ev, state) => {
-      if (state === 'completed' && process.platform === 'darwin') app.dock?.downloadFinished(item.getSavePath())
-    })
+    const path = uniquePath(app.getPath('downloads'), item.getFilename())
+    item.setSavePath(path)
+    downloads.track(item, path)
+    item.once('done', () => reservedPaths.delete(path))
   })
 }
 
@@ -86,6 +93,20 @@ async function start() {
   const state = loadState()
   const rendererUrl = process.env.ELECTRON_RENDERER_URL ?? `file://${join(__dirname, '../renderer/index.html')}`
 
+  // History, downloads and site permissions. A broken database must not stop the browser.
+  try {
+    db = new BrowserDB(join(app.getPath('userData'), 'Browser.sqlite'))
+    // Keep 90 days of history, like Chrome; do it once startup has settled.
+    setTimeout(() => db?.prune(Date.now() - 90 * 86_400_000), 30_000)
+  } catch (err) {
+    console.error('Could not open the history database:', err)
+  }
+
+  loadPermissions(db)
+  const downloads = new Downloads(db)
+  downloads.onChange = () => shell?.downloadsChanged()
+  downloads.onRetry = (url) => shell?.activeWebContents()?.downloadURL(url)
+
   // Shields read settings from whichever window state is current.
   const shields = new Shields(() => (shell ? shell.shieldsSettings : state.shields))
 
@@ -97,7 +118,7 @@ async function start() {
   const prepareSession = (partition: string): Promise<void> => {
     let ready = prepared.get(partition)
     if (!ready) {
-      setupSession(partition)
+      setupSession(partition, downloads)
       applyH264(partition, (shell?.settings ?? state.settings).preferH264)
       shields.attach(session.fromPartition(partition))
       ready = setupExtensions(partition).catch((err) => console.error('Extension setup failed:', err))
@@ -111,6 +132,10 @@ async function start() {
     if (!shell || !shell.isUIWebContents(event.sender)) return null
     return shell.snapshot()
   })
+  ipcMain.handle(IPC.query, (event, q: Query) => {
+    if (!shell || !shell.isUIWebContents(event.sender) || !q || typeof q.type !== 'string') return null
+    return shell.query(q)
+  })
   ipcMain.on(IPC.action, (event, action: Action) => {
     if (!shell || !shell.isUIWebContents(event.sender)) return
     if (!action || typeof action !== 'object' || typeof action.type !== 'string') return
@@ -120,6 +145,8 @@ async function start() {
   const createShell = (s: PersistedState) => {
     const created = new BrowserShell(s, rendererUrl)
     created.attachShields(shields)
+    created.db = db
+    created.downloads = downloads
     created.prepareSession = prepareSession
     created.onSettingsChanged = (settings) => {
       for (const partition of new Set(s.spaces.map((sp) => sp.partition))) applyH264(partition, settings.preferH264)
@@ -163,3 +190,11 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => flushState())
+app.on('will-quit', () => {
+  try {
+    db?.close()
+  } catch {
+    /* already closed */
+  }
+  db = null
+})

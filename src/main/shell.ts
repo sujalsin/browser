@@ -1,10 +1,28 @@
-import { BrowserWindow, Menu, WebContentsView, clipboard, dialog, nativeTheme, shell as electronShell, type WebContents } from 'electron'
+import { BrowserWindow, Menu, WebContentsView, app, clipboard, dialog, nativeTheme, session, shell as electronShell, type WebContents } from 'electron'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname } from 'node:path'
+import { homedir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { SIDEBAR_WIDTH, VIEW_GAP, VIEW_RADIUS } from '../shared/constants'
-import type { Action, ClosedTab, CommandBarState, ListRef, PersistedState, Settings, ShieldsSettings, Tab, TabRuntime, UIState } from '../shared/types'
+import type {
+  Action,
+  AppInfo,
+  ClosedTab,
+  CommandBarState,
+  FindState,
+  LibraryTab,
+  ListRef,
+  PersistedState,
+  Query,
+  Settings,
+  ShieldsSettings,
+  Tab,
+  TabRuntime,
+  UIState,
+} from '../shared/types'
 import { IPC } from '../shared/types'
-import { displayHost, resolveInput } from '../shared/url'
+import { SEARCH_ENGINES, displayHost, resolveInput } from '../shared/url'
 import { attachWebContextMenu } from './context-menu'
 import { getExtensions, setExtensionsShell } from './extensions'
 import {
@@ -28,6 +46,10 @@ import {
   tidy,
   type Location,
 } from './model'
+import { ARC_DEFAULT_PROFILE, applyArcPlan, arcHistoryPath, countPlan, parseArcSidebar, readArcHistory } from './arc-import'
+import type { BrowserDB } from './db'
+import type { Downloads } from './downloads'
+import { forgetPermission } from './permissions'
 import { Shields } from './shields'
 import { flushState, saveState } from './store'
 
@@ -38,6 +60,9 @@ const EMIT_INTERVAL_MS = 50
 const SLEEP_CHECK_MS = 60_000
 /** The UI only needs recent archive entries; the full list stays on disk. */
 const ARCHIVE_IN_SNAPSHOT = 100
+
+/** Where Arc keeps its sidebar (spaces, pinned tabs, favorites). */
+export const ARC_SIDEBAR_FILE = join(homedir(), 'Library', 'Application Support', 'Arc', 'StorableSidebar.json')
 
 /** Arc-like space colors. */
 export const SPACE_COLORS = [
@@ -90,6 +115,24 @@ export class BrowserShell {
   prepareSession: (partition: string) => Promise<void> = async () => {}
   /** Space or folder name being edited inline in the sidebar. */
   private editing: UIState['editing'] = null
+  /** History, downloads and permissions storage; set by the app. */
+  db: BrowserDB | null = null
+  downloads: Downloads | null = null
+  private library: UIState['library'] = null
+  private downloadsUnseen = false
+  private seenCompleted = 0
+  private find: FindState | null = null
+  private findView: WebContentsView | null = null
+
+  /** Run a storage call without letting a database problem break browsing. */
+  private record(fn: (db: BrowserDB) => void) {
+    if (!this.db) return
+    try {
+      fn(this.db)
+    } catch (err) {
+      console.error('History write failed:', err)
+    }
+  }
 
   /** Wire Shields events (blocked counts, list status) into this window's UI. */
   attachShields(shields: Shields) {
@@ -198,7 +241,7 @@ export class BrowserShell {
   }
 
   isUIWebContents(wc: WebContents): boolean {
-    return wc === this.win.webContents || wc === this.overlay?.webContents
+    return wc === this.win.webContents || wc === this.overlay?.webContents || wc === this.findView?.webContents
   }
 
   snapshot(): UIState {
@@ -213,6 +256,10 @@ export class BrowserShell {
       shieldsStatus: this.shields?.getStatus() ?? { ready: false, updating: false },
       activeShieldsOn: !!this.shields?.activeFor(this.activeTab()?.url),
       editing: this.editing,
+      downloads: this.downloads?.recent() ?? [],
+      downloadsUnseen: this.downloadsUnseen,
+      library: this.library,
+      find: this.find,
     }
   }
 
@@ -231,7 +278,7 @@ export class BrowserShell {
   }
 
   private overlayVisible() {
-    return !!this.overlay && (!!this.commandBar || this.peek)
+    return !!this.overlay && (!!this.commandBar || this.peek || !!this.library)
   }
 
   /**
@@ -255,6 +302,7 @@ export class BrowserShell {
     this.win.webContents.send(IPC.state, snap)
     // The overlay is refreshed only while it is on screen (and when shown).
     if (this.overlayVisible() && !this.overlay!.webContents.isDestroyed()) this.overlay!.webContents.send(IPC.state, snap)
+    if (this.find && this.findView && !this.findView.webContents.isDestroyed()) this.findView.webContents.send(IPC.state, snap)
   }
 
   // ───────────────────────────── layout ─────────────────────────────
@@ -282,8 +330,14 @@ export class BrowserShell {
     }
     // Command bar: whole window. Peek: just the sidebar strip, so the page stays clickable.
     this.overlay?.setBounds(
-      this.commandBar ? { x: 0, y: 0, width, height } : { x: 0, y: 0, width: Math.min(width, SIDEBAR_WIDTH + 16), height },
+      this.commandBar || this.library ? { x: 0, y: 0, width, height } : { x: 0, y: 0, width: Math.min(width, SIDEBAR_WIDTH + 16), height },
     )
+    // Find bar: top-right corner of the page.
+    if (this.findView) {
+      // Includes transparent padding so the bar's shadow isn't clipped.
+      const w = Math.min(400, Math.max(280, width - SIDEBAR_WIDTH - 40))
+      this.findView.setBounds({ x: width - VIEW_GAP - w, y: VIEW_GAP + 4, width: w, height: 72 })
+    }
   }
 
   /** macOS traffic lights live in the sidebar; hide them when it is hidden. */
@@ -301,7 +355,8 @@ export class BrowserShell {
     const view = id ? this.views.get(id) : undefined
     if (view) {
       this.win.contentView.addChildView(view)
-      // Keep the overlay (command bar / peek sidebar) on top.
+      // Keep the find bar and overlay (command bar / peek sidebar) on top.
+      if (this.find && this.findView) this.win.contentView.addChildView(this.findView)
       if (this.overlayVisible()) this.win.contentView.addChildView(this.overlay!)
     }
     this.layout()
@@ -406,18 +461,41 @@ export class BrowserShell {
       if (rt()) rt().loading = false
       syncNav()
     })
-    wc.on('did-navigate', (_e, url) => {
+    wc.on('did-navigate', (_e, url, httpResponseCode) => {
       this.typedIn.delete(id)
       update({ url, favicon: undefined })
       syncNav()
+      if (isWebUrl(url) && httpResponseCode < 400) this.record((db) => db.addVisit(url, ''))
+      lastRecorded = stripHash(url)
+    })
+    let lastRecorded = ''
+    wc.on('did-navigate-in-page', (_e, url, isMainFrame) => {
+      // Single-page apps (YouTube, Gmail) change pages without reloading: record those too.
+      if (!isMainFrame || !isWebUrl(url) || stripHash(url) === lastRecorded) return
+      lastRecorded = stripHash(url)
+      this.record((db) => db.addVisit(url, wc.getTitle()))
     })
     wc.on('before-input-event', (_e, input) => {
       // Typing (not shortcuts) means there may be unsaved text: don't sleep this tab.
       if (input.type === 'keyDown' && !input.meta && !input.control && input.key.length === 1) this.typedIn.add(id)
     })
     wc.on('did-navigate-in-page', syncNav)
-    wc.on('page-title-updated', (_e, title) => update({ title: title || NEW_TAB_TITLE }))
-    wc.on('page-favicon-updated', (_e, favicons) => update({ favicon: favicons[0] }))
+    wc.on('page-title-updated', (_e, title) => {
+      update({ title: title || NEW_TAB_TITLE })
+      const url = wc.getURL()
+      if (isWebUrl(url)) this.record((db) => db.setTitle(url, title))
+    })
+    wc.on('page-favicon-updated', (_e, favicons) => {
+      update({ favicon: favicons[0] })
+      const url = wc.getURL()
+      if (favicons[0] && isWebUrl(url)) this.record((db) => db.setFavicon(url, favicons[0]))
+    })
+    wc.on('found-in-page', (_e, result) => {
+      if (!this.find || this.state.activeTabId !== id) return
+      this.find.active = result.activeMatchOrdinal
+      this.find.total = result.matches
+      this.emit(false)
+    })
     wc.on('audio-state-changed', (e) => {
       if (rt()) rt().audible = e.audible
       this.emit(false)
@@ -545,6 +623,7 @@ export class BrowserShell {
   activate(id: string) {
     const tab = this.tab(id)
     if (!tab) return
+    if (id !== this.state.activeTabId) this.closeFind()
     // Selecting a tab from another space (command bar, archive, extension) switches to it.
     const space = this.space()
     const tabSpace = spaceById(this.state, tab.spaceId)
@@ -940,12 +1019,12 @@ export class BrowserShell {
 
   /** Arc-style: hovering the left edge shows the hidden sidebar over the page. */
   setPeek(open: boolean) {
-    if (open && (this.state.sidebarVisible || this.htmlFullscreen || this.commandBar)) return
+    if (open && (this.state.sidebarVisible || this.htmlFullscreen || this.commandBar || this.library)) return
     if (this.peek === open) return
     this.peek = open
     const overlay = this.ensureOverlay()
     if (open) this.win.contentView.addChildView(overlay)
-    else if (!this.commandBar) this.win.contentView.removeChildView(overlay)
+    else if (!this.commandBar && !this.library) this.win.contentView.removeChildView(overlay)
     this.applyWindowButtons()
     this.layout()
     this.emitNow()
@@ -979,6 +1058,7 @@ export class BrowserShell {
     const active = this.activeTab()
     if (mode === 'edit' && !active) mode = 'new'
     this.peek = false
+    this.library = null
     this.commandBar = { mode, initialInput: mode === 'edit' && active ? active.url : '' }
     const overlay = this.ensureOverlay()
     this.win.contentView.addChildView(overlay)
@@ -991,7 +1071,7 @@ export class BrowserShell {
   closeCommandBar() {
     if (!this.commandBar) return
     this.commandBar = null
-    if (this.overlay) this.win.contentView.removeChildView(this.overlay)
+    if (this.overlay && !this.library) this.win.contentView.removeChildView(this.overlay)
     this.layout()
     this.activeWebContents()?.focus()
     this.emitNow()
@@ -1158,6 +1238,250 @@ export class BrowserShell {
     Menu.buildFromTemplate(items).popup({ window: this.win })
   }
 
+  // ───────────────────────────── find in page ─────────────────────────────
+
+  openFind() {
+    const wc = this.activeWebContents()
+    if (!wc || this.commandBar || this.library) return
+    this.find ??= { query: '', active: 0, total: 0, focusToken: 0 }
+    this.find.focusToken++
+    if (!this.findView) {
+      const view = new WebContentsView({
+        webPreferences: { preload: join(__dirname, '../preload/index.js'), sandbox: true, contextIsolation: true, nodeIntegration: false },
+      })
+      view.setBackgroundColor('#00000000')
+      void view.webContents.loadURL(`${this.rendererUrl}#find`)
+      view.webContents.on('did-finish-load', () => this.emitNow())
+      this.findView = view
+    }
+    this.win.contentView.addChildView(this.findView)
+    if (this.overlayVisible()) this.win.contentView.addChildView(this.overlay!)
+    this.layout()
+    this.findView.webContents.focus()
+    this.emitNow()
+  }
+
+  /** New text (`next` false) or Enter / ⇧Enter / ⌘G (`next` true). */
+  findQuery(text: string, forward = true, next = false) {
+    const wc = this.activeWebContents()
+    if (!wc || !this.find) return
+    this.find.query = text
+    if (!text) {
+      wc.stopFindInPage('clearSelection')
+      this.find.active = 0
+      this.find.total = 0
+      this.emit(false)
+      return
+    }
+    wc.findInPage(text, { forward, findNext: !next })
+    // Highlighting a match can pull focus into the page; keep typing in the bar.
+    this.findView?.webContents.focus()
+  }
+
+  closeFind() {
+    if (!this.find) return
+    const wc = this.activeWebContents()
+    wc?.stopFindInPage('keepSelection')
+    this.find = null
+    if (this.findView) this.win.contentView.removeChildView(this.findView)
+    wc?.focus()
+    this.emit(false)
+  }
+
+  /** ⌘G / ⇧⌘G from the menu. */
+  findAgain(forward: boolean) {
+    if (!this.find) return this.openFind()
+    this.findQuery(this.find.query, forward, true)
+  }
+
+  // ───────────────────────────── Library (History / Downloads / Settings) ─────────────────────────────
+
+  openLibrary(tab: LibraryTab) {
+    this.commandBar = null
+    this.peek = false
+    this.closeFind()
+    this.library = { tab }
+    if (tab === 'downloads') this.markDownloadsSeen()
+    const overlay = this.ensureOverlay()
+    this.win.contentView.addChildView(overlay)
+    this.applyWindowButtons()
+    this.layout()
+    overlay.webContents.focus()
+    this.emitNow()
+  }
+
+  closeLibrary() {
+    if (!this.library) return
+    this.library = null
+    if (this.overlay) this.win.contentView.removeChildView(this.overlay)
+    this.layout()
+    this.activeWebContents()?.focus()
+    this.emitNow()
+  }
+
+  private markDownloadsSeen() {
+    this.downloadsUnseen = false
+    this.seenCompleted = this.downloads?.recent().filter((d) => d.state === 'completed').length ?? 0
+  }
+
+  /** Progress or a finished download: refresh the UI (and flag finished ones as new). */
+  downloadsChanged() {
+    const completed = this.downloads?.recent().filter((d) => d.state === 'completed').length ?? 0
+    if (completed > this.seenCompleted) {
+      if (this.library?.tab === 'downloads') this.seenCompleted = completed
+      else this.downloadsUnseen = true
+    }
+    this.emit(false)
+  }
+
+  private updateSettingsFromUI(patch: Partial<Settings>) {
+    const clean: Partial<Settings> = {}
+    if ([0, 5, 15, 30, 60].includes(Number(patch.sleepAfterMinutes))) clean.sleepAfterMinutes = Number(patch.sleepAfterMinutes)
+    if ([0, 12, 24, 168, 720].includes(Number(patch.archiveAfterHours))) clean.archiveAfterHours = Number(patch.archiveAfterHours)
+    if (typeof patch.preferH264 === 'boolean') clean.preferH264 = patch.preferH264
+    if (Object.keys(clean).length) this.updateSettings(clean)
+  }
+
+  private updateShieldsFromUI(patch: Partial<ShieldsSettings>) {
+    const clean: Partial<ShieldsSettings> = {}
+    for (const key of ['enabled', 'blockCookieBanners', 'upgradeHttps', 'stripTrackingParams'] as const) {
+      if (typeof patch[key] === 'boolean') clean[key] = patch[key]
+    }
+    if (Array.isArray(patch.disabledSites)) clean.disabledSites = patch.disabledSites.filter((d) => typeof d === 'string').slice(0, 1000)
+    if (Object.keys(clean).length) this.updateShields(clean)
+  }
+
+  private async clearData(what: 'cache' | 'cookies') {
+    const { response } = await dialog.showMessageBox(this.win, {
+      type: 'warning',
+      buttons: [what === 'cache' ? 'Clear Cache' : 'Clear Cookies', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      message: what === 'cache' ? 'Clear cached files for all spaces?' : 'Clear cookies for all spaces?',
+      detail:
+        what === 'cache'
+          ? 'Pages may load a little slower the first time afterwards.'
+          : 'You will be signed out of websites. Extensions such as Bitwarden keep their data.',
+    })
+    if (response !== 0) return
+    for (const partition of new Set(this.state.spaces.map((s) => s.partition))) {
+      const ses = session.fromPartition(partition)
+      if (what === 'cache') await ses.clearCache()
+      else await ses.clearStorageData({ storages: ['cookies'] })
+    }
+  }
+
+  // ───────────────────────────── import from Arc ─────────────────────────────
+
+  async importFromArc() {
+    let file = ARC_SIDEBAR_FILE
+    if (!existsSync(file)) {
+      const picked = await dialog.showOpenDialog(this.win, {
+        title: 'Choose Arc’s StorableSidebar.json',
+        message: 'Arc keeps it in ~/Library/Application Support/Arc/',
+        properties: ['openFile'],
+        filters: [{ name: 'Arc sidebar', extensions: ['json'] }],
+      })
+      if (picked.canceled || !picked.filePaths[0]) return
+      file = picked.filePaths[0]
+    }
+
+    let plan
+    try {
+      plan = parseArcSidebar(JSON.parse(readFileSync(file, 'utf8')))
+    } catch (err) {
+      await dialog.showMessageBox(this.win, { type: 'error', message: 'Couldn’t read Arc’s data', detail: String(err) })
+      return
+    }
+    const n = countPlan(plan)
+    if (!n.spaces && !n.favorites) {
+      await dialog.showMessageBox(this.win, { type: 'info', message: 'Nothing to import', detail: 'No spaces or favorites were found in that file.' })
+      return
+    }
+
+    const arcDir = dirname(file)
+    const profiles = [...new Set([...plan.spaces.map((s) => s.profile), ...plan.favorites.map((f) => f.profile)])]
+    const hasHistory = profiles.some((p) => existsSync(arcHistoryPath(arcDir, p)))
+    const parts = [
+      `${n.spaces} space${n.spaces === 1 ? '' : 's'}`,
+      `${n.pinned} pinned tab${n.pinned === 1 ? '' : 's'}${n.folders ? ` in ${n.folders} folder${n.folders === 1 ? '' : 's'}` : ''}`,
+      `${n.favorites} favorite${n.favorites === 1 ? '' : 's'}`,
+      ...(n.today ? [`${n.today} Today tab${n.today === 1 ? '' : 's'}`] : []),
+    ]
+    const { response, checkboxChecked } = await dialog.showMessageBox(this.win, {
+      type: 'question',
+      buttons: ['Import', 'Cancel'],
+      defaultId: 0,
+      cancelId: 1,
+      message: 'Import from Arc?',
+      detail:
+        `Found ${parts.join(', ')}.\n\nThey are added as new spaces; your current spaces stay as they are.` +
+        (n.profiles > 1 ? ' Arc profiles become separate profiles here (you’ll need to sign in to sites again there).' : '') +
+        ' Passwords and cookies aren’t imported.',
+      checkboxLabel: hasHistory ? 'Also import browsing history (last 90 days)' : undefined,
+      checkboxChecked: hasHistory,
+    })
+    if (response !== 0) return
+
+    // Arc's main profile maps to ours; other Arc profiles get their own sessions.
+    const mainPartition = this.state.spaces[0].partition
+    const partitionFor = (profile: string) =>
+      profile === ARC_DEFAULT_PROFILE ? mainPartition : `persist:arc-${profile.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
+    for (const p of profiles) if (p !== ARC_DEFAULT_PROFILE) await this.prepareSession(partitionFor(p))
+
+    const created = applyArcPlan(this.state, plan, {
+      partitionFor,
+      newId: () => randomUUID(),
+      palette: SPACE_COLORS.map((c) => c.value),
+      now: Date.now(),
+    })
+    if (created[0]) this.switchSpace(created[0])
+    this.emit()
+
+    let pages = 0
+    if (hasHistory && checkboxChecked) {
+      const since = Date.now() - 90 * 86_400_000
+      for (const p of profiles) {
+        try {
+          const rows = readArcHistory(arcHistoryPath(arcDir, p), since)
+          this.record((db) => (pages += db.importUrls(rows)))
+        } catch (err) {
+          console.error(`Arc history import failed for ${p}:`, err)
+        }
+      }
+    }
+    await dialog.showMessageBox(this.win, {
+      type: 'info',
+      message: 'Imported from Arc',
+      detail: `Added ${parts.join(', ')}${pages ? `, and ${pages.toLocaleString()} pages of history` : ''}.`,
+    })
+  }
+
+  // ───────────────────────────── queries from the UI ─────────────────────────────
+
+  query(q: Query): unknown {
+    switch (q.type) {
+      case 'history.suggest':
+        return this.db?.suggest(String(q.input ?? '').slice(0, 200), 6) ?? []
+      case 'history.list':
+        return this.db?.listVisits({ query: q.query ? String(q.query).slice(0, 200) : undefined, before: Number(q.before) || undefined, limit: 200 }) ?? []
+      case 'permissions.list':
+        return this.db?.listPermissions() ?? []
+      case 'app.info': {
+        const info: AppInfo = {
+          version: app.getVersion(),
+          electron: process.versions.electron,
+          chrome: process.versions.chrome,
+          isDefaultBrowser: app.isDefaultProtocolClient('https'),
+          arcFound: existsSync(ARC_SIDEBAR_FILE),
+          historyCount: this.db?.historyCount() ?? 0,
+        }
+        return info
+      }
+    }
+    return null
+  }
+
   // ───────────────────────────── IPC entry point ─────────────────────────────
 
   handleAction(action: Action) {
@@ -1222,6 +1546,48 @@ export class BrowserShell {
         return this.emit(false)
       case 'tabs.tidy':
         return this.tidy()
+      case 'library.open':
+        return this.openLibrary(['history', 'downloads', 'settings'].includes(action.tab) ? action.tab : 'history')
+      case 'library.close':
+        return this.closeLibrary()
+      case 'download.act':
+        return this.downloads?.act(String(action.id), action.op)
+      case 'downloads.clear':
+        return this.downloads?.clear()
+      case 'history.delete':
+        this.record((db) => db.deleteUrl(String(action.url)))
+        return this.emit(false)
+      case 'history.clear':
+        this.record((db) => db.deleteSince(Math.max(0, Number(action.since) || 0)))
+        return this.emit(false)
+      case 'settings.update':
+        return this.updateSettingsFromUI(action.patch ?? {})
+      case 'searchEngine.set':
+        if (action.id in SEARCH_ENGINES) {
+          this.state.searchEngine = action.id
+          this.emit()
+        }
+        return
+      case 'shields.update':
+        return this.updateShieldsFromUI(action.patch ?? {})
+      case 'permissions.forget':
+        forgetPermission({ partition: String(action.partition), origin: String(action.origin), permission: String(action.permission) })
+        return this.emit(false)
+      case 'browser.makeDefault':
+        app.setAsDefaultProtocolClient('http')
+        app.setAsDefaultProtocolClient('https')
+        return this.emit(false)
+      case 'find.open':
+        return this.openFind()
+      case 'find.query':
+        return this.findQuery(String(action.text ?? '').slice(0, 500), action.forward !== false, !!action.next)
+      case 'find.close':
+        return this.closeFind()
+      case 'arc.import':
+        this.closeLibrary()
+        return void this.importFromArc()
+      case 'data.clear':
+        return void this.clearData(action.what === 'cache' ? 'cache' : 'cookies')
     }
   }
 }
@@ -1233,4 +1599,13 @@ function timeAgo(ts: number): string {
   const h = Math.round(min / 60)
   if (h < 48) return `${h} hour${h === 1 ? '' : 's'} ago`
   return `${Math.round(h / 24)} days ago`
+}
+
+function isWebUrl(url: string): boolean {
+  return url.startsWith('https://') || url.startsWith('http://')
+}
+
+function stripHash(url: string): string {
+  const i = url.indexOf('#')
+  return i < 0 ? url : url.slice(0, i)
 }

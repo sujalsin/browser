@@ -1,8 +1,10 @@
 import { BrowserWindow, dialog, type Session } from 'electron'
+import type { SitePermission } from '../shared/types'
+import type { BrowserDB } from './db'
 
 // Electron grants every permission by default. Instead, allow a small set of
-// harmless ones and ask about the rest, remembering answers until quit.
-// (Phase 3 moves this to a site-settings panel with persisted decisions.)
+// harmless ones and ask about the rest. Allow/Block answers are remembered per
+// profile and can be reset in Settings → Site Permissions.
 
 const ALWAYS_ALLOW = new Set([
   'fullscreen',
@@ -26,7 +28,54 @@ const ASK: Record<string, string> = {
   'top-level-storage-access': 'use cookies across sites',
 }
 
+/** Human name for a permission in Settings. */
+export const PERMISSION_LABELS: Record<string, string> = {
+  media: 'Camera & microphone',
+  geolocation: 'Location',
+  notifications: 'Notifications',
+  'clipboard-read': 'Clipboard',
+  'display-capture': 'Screen recording',
+  midi: 'MIDI devices',
+  midiSysex: 'MIDI devices',
+  'idle-detection': 'Idle detection',
+  'storage-access': 'Cross-site cookies',
+  'top-level-storage-access': 'Cross-site cookies',
+}
+
+/** Remembered decisions: "partition|origin|permission" → allowed. */
 const decisions = new Map<string, boolean>()
+let store: BrowserDB | null = null
+
+const keyOf = (partition: string, origin: string, permission: string) => `${partition}|${origin}|${permission}`
+
+/** Load saved decisions. Call once at startup. */
+export function loadPermissions(db: BrowserDB | null) {
+  store = db
+  try {
+    for (const p of db?.listPermissions() ?? []) decisions.set(keyOf(p.partition, p.origin, p.permission), p.allowed)
+  } catch (err) {
+    console.error('Could not load site permissions:', err)
+  }
+}
+
+/** Forget a decision (Settings → Site Permissions → Reset); the site will ask again. */
+export function forgetPermission(p: Pick<SitePermission, 'partition' | 'origin' | 'permission'>) {
+  decisions.delete(keyOf(p.partition, p.origin, p.permission))
+  try {
+    store?.deletePermission(p.partition, p.origin, p.permission)
+  } catch (err) {
+    console.error('Could not delete site permission:', err)
+  }
+}
+
+function remember(partition: string, origin: string, permission: string, allowed: boolean) {
+  decisions.set(keyOf(partition, origin, permission), allowed)
+  try {
+    store?.setPermission({ partition, origin, permission, allowed, updated: Date.now() })
+  } catch (err) {
+    console.error('Could not save site permission:', err)
+  }
+}
 
 function originOf(url: string): string {
   try {
@@ -48,7 +97,7 @@ function isExtension(url: string): boolean {
   return url.startsWith('chrome-extension://')
 }
 
-export function installPermissionHandlers(ses: Session): void {
+export function installPermissionHandlers(ses: Session, partition: string): void {
   ses.setPermissionRequestHandler(async (wc, permission, callback, details) => {
     const url = details.requestingUrl || wc.getURL()
     if (ALWAYS_ALLOW.has(permission) || isExtension(url)) return callback(true)
@@ -56,26 +105,27 @@ export function installPermissionHandlers(ses: Session): void {
     if (!what) return callback(false)
 
     const origin = originOf(url)
-    const key = `${origin}|${permission}`
-    const remembered = decisions.get(key)
+    const remembered = decisions.get(keyOf(partition, origin, permission))
     if (remembered !== undefined) return callback(remembered)
 
     const win = BrowserWindow.fromWebContents(wc) ?? BrowserWindow.getFocusedWindow()
     const options: Electron.MessageBoxOptions = {
       type: 'question',
-      buttons: ['Allow', 'Block'],
-      defaultId: 1,
-      cancelId: 1,
+      buttons: ['Allow', 'Block', 'Not Now'],
+      defaultId: 0,
+      cancelId: 2,
       message: `${hostOf(origin)} wants to ${what}`,
+      detail: 'You can change this later in Settings → Site Permissions.',
     }
     const { response } = win ? await dialog.showMessageBox(win, options) : await dialog.showMessageBox(options)
+    if (response === 2) return callback(false) // "Not Now": ask again next time
     const allowed = response === 0
-    decisions.set(key, allowed)
+    remember(partition, origin, permission, allowed)
     callback(allowed)
   })
 
   ses.setPermissionCheckHandler((_wc, permission, requestingOrigin) => {
     if (ALWAYS_ALLOW.has(permission) || isExtension(requestingOrigin)) return true
-    return decisions.get(`${originOf(requestingOrigin)}|${permission}`) === true
+    return decisions.get(keyOf(partition, originOf(requestingOrigin), permission)) === true
   })
 }

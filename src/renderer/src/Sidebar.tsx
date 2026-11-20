@@ -244,6 +244,7 @@ export function Sidebar({ state }: { state: UIState }) {
 
           <footer className="sidebar-bottom">
             <SpaceSwitcher state={state} />
+            <DownloadsButton state={state} />
             <button className="icon-btn" title="New space" onClick={() => dispatch({ type: 'space.addMenu' })}>
               <Icon name="plus" size={15} />
             </button>
@@ -493,6 +494,25 @@ function ShieldsButton({ state }: { state: UIState }) {
     <button className={`shields-btn ${on ? '' : 'off'}`} title={title} onClick={() => dispatch({ type: 'shields.menu' })}>
       <Icon name={on ? 'shield' : 'shieldOff'} size={15} />
       {on && blocked > 0 && <span className="shields-count">{blocked > 99 ? '99+' : blocked}</span>}
+    </button>
+  )
+}
+
+/** Shows while something is downloading (with progress) or a finished download is new. */
+function DownloadsButton({ state }: { state: UIState }) {
+  const active = state.downloads.filter((d) => d.state === 'progressing')
+  if (!active.length && !state.downloadsUnseen) return null
+  const total = active.reduce((n, d) => n + d.total, 0)
+  const received = active.reduce((n, d) => n + d.received, 0)
+  const pct = total ? Math.round((received / total) * 100) : 0
+  return (
+    <button
+      className={`icon-btn downloads-btn ${state.downloadsUnseen ? 'unseen' : ''}`}
+      title={active.length ? `Downloading ${active.length} file${active.length > 1 ? 's' : ''}${total ? ` (${pct}%)` : ''}` : 'Download finished'}
+      style={{ '--pct': `${active.length ? pct : 100}%` } as CSSProperties}
+      onClick={() => dispatch({ type: 'library.open', tab: 'downloads' })}
+    >
+      <Icon name="download" size={15} />
     </button>
   )
 }

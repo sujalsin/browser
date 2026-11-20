@@ -65,7 +65,26 @@ export function installMenu(getShell: () => BrowserShell | null): void {
   }
 
   const template: MenuItemConstructorOptions[] = [
-    ...(isMac ? [{ role: 'appMenu' as const }] : []),
+    ...(isMac
+      ? [
+          {
+            role: 'appMenu' as const,
+            submenu: [
+              { role: 'about' as const },
+              { type: 'separator' as const },
+              { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: withShell((s) => s.openLibrary('settings')) },
+              { type: 'separator' as const },
+              { role: 'services' as const },
+              { type: 'separator' as const },
+              { role: 'hide' as const },
+              { role: 'hideOthers' as const },
+              { role: 'unhide' as const },
+              { type: 'separator' as const },
+              { role: 'quit' as const },
+            ],
+          },
+        ]
+      : []),
     {
       label: 'File',
       submenu: [
@@ -83,10 +102,37 @@ export function installMenu(getShell: () => BrowserShell | null): void {
         },
         { type: 'separator' },
         { label: 'Copy URL', accelerator: 'CmdOrCtrl+Shift+C', click: withShell((s) => s.copyUrl()) },
-        ...(isMac ? [] : [{ type: 'separator' as const }, { role: 'quit' as const }]),
+        { type: 'separator' },
+        { label: 'History', accelerator: 'CmdOrCtrl+Y', click: withShell((s) => s.openLibrary('history')) },
+        { label: 'Downloads', accelerator: 'CmdOrCtrl+Shift+J', click: withShell((s) => s.openLibrary('downloads')) },
+        { label: 'Import from Arc…', click: withShell((s) => s.handleAction({ type: 'arc.import' })) },
+        ...(isMac
+          ? []
+          : [
+              { type: 'separator' as const },
+              { label: 'Settings', accelerator: 'Ctrl+,', click: withShell((s) => s.openLibrary('settings')) },
+              { role: 'quit' as const },
+            ]),
       ],
     },
-    { role: 'editMenu' },
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'pasteAndMatchStyle' },
+        { role: 'delete' },
+        { role: 'selectAll' },
+        { type: 'separator' },
+        { label: 'Find…', accelerator: 'CmdOrCtrl+F', click: withShell((s) => s.openFind()) },
+        { label: 'Find Next', accelerator: 'CmdOrCtrl+G', click: withShell((s) => s.findAgain(true)) },
+        { label: 'Find Previous', accelerator: 'CmdOrCtrl+Shift+G', click: withShell((s) => s.findAgain(false)) },
+      ],
+    },
     {
       label: 'View',
       submenu: [

@@ -55,6 +55,10 @@ The Bitwarden button appears under the address pill in the sidebar.
 | ⌃Tab / ⌃⇧Tab, ⌥⌘↓ / ⌥⌘↑ | Next / previous tab |
 | ⌘[ / ⌘] / ⌘R | Back / forward / reload |
 | ⌘= / ⌘- / ⌘0 | Zoom in / out / reset |
+| ⌘F / ⌘G / ⇧⌘G | Find in page / next / previous |
+| ⌘Y | History |
+| ⇧⌘J | Downloads |
+| ⌘, | Settings |
 | ⌥⌘I | Developer tools |
 
 Pinned tabs work like Arc: ⌘W unloads them, and they return to their pinned URL.
@@ -81,6 +85,21 @@ over the page, like Arc.
 - **Auto-archive** — Today tabs you haven't opened in 12 hours are archived (Tabs → Archive Today
   Tabs to change). Archived tabs are under the archive button and in ⌘T search.
 - **⌘T searches every space** and switches to the tab's space.
+
+## Everyday features
+
+- **Find in page** (⌘F) — Enter / ⇧Enter or ⌘G / ⇧⌘G step through matches, Esc closes.
+- **History** (⌘Y) — searchable, grouped by day; delete single pages or clear a time range.
+  Kept for 90 days. ⌘T suggests pages from history as you type.
+- **Downloads** (⇧⌘J) — saved to ~/Downloads. A progress ring appears in the sidebar while
+  downloading; pause, resume, cancel, open or show in Finder.
+- **Settings** (⌘,) — search engine, default browser, tab sleeping and archiving, H.264,
+  Shields, site permissions (camera, location, notifications… — answers are remembered and
+  can be reset), clearing cache or cookies.
+- **Import from Arc** (File → Import from Arc…, or Settings) — brings over your spaces (with
+  their colors), pinned tabs, folders, Today tabs and Favorites, plus 90 days of browsing history.
+  Arc profiles become separate profiles here. Passwords and cookies aren't imported (Bitwarden
+  has your passwords).
 
 ## Shields (ad and tracker blocking)
 

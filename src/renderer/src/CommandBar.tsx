@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import type { ArchivedTab, Tab, UIState } from '../../shared/types'
+import type { ArchivedTab, HistoryItem, Tab, UIState } from '../../shared/types'
 import { SEARCH_ENGINES, displayHost, resolveInput } from '../../shared/url'
 import { Favicon } from './Favicon'
 import { Icon } from './Icon'
@@ -9,6 +9,7 @@ type Result =
   | { kind: 'go'; input: string; url: string; isSearch: boolean }
   | { kind: 'tab'; tab: Tab }
   | { kind: 'archive'; item: ArchivedTab; index: number }
+  | { kind: 'history'; item: HistoryItem }
 
 const MAX_RESULTS = 8
 
@@ -22,16 +23,29 @@ function score(query: string, title: string, url: string): number {
   return 0
 }
 
-function buildResults(state: UIState, input: string): Result[] {
+function hostOf(url: string) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '')
+  } catch {
+    return ''
+  }
+}
+
+function buildResults(state: UIState, input: string, history: HistoryItem[]): Result[] {
   const query = input.trim()
   const results: Result[] = []
   if (!query) return results
 
   const url = resolveInput(query, state.searchEngine)
-  if (url) {
-    const isSearch = url.startsWith(SEARCH_ENGINES[state.searchEngine].template.split('%s')[0])
-    results.push({ kind: 'go', input: query, url, isSearch })
-  }
+  const go: Result | null = url
+    ? { kind: 'go', input: query, url, isSearch: url.startsWith(SEARCH_ENGINES[state.searchEngine].template.split('%s')[0]) }
+    : null
+
+  // Typing the start of a site you visit ("gith") makes that site the Enter action, like Chrome.
+  const typed = query.toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '')
+  const best = !/\s/.test(query) ? history.find((h) => hostOf(h.url).startsWith(typed)) : undefined
+  if (best) results.push({ kind: 'history', item: best })
+  if (go) results.push(go)
 
   // Tabs from every space; the current space ranks first on ties.
   const here = (t: Tab) => (t.spaceId === state.activeSpaceId || t.kind === 'favorite' ? 1 : 0)
@@ -41,6 +55,10 @@ function buildResults(state: UIState, input: string): Result[] {
     .filter((x) => x.s > 0)
     .sort((a, b) => b.s - a.s || here(b.tab) - here(a.tab) || b.tab.lastActiveAt - a.tab.lastActiveAt)
   for (const { tab } of tabs) results.push({ kind: 'tab', tab })
+
+  // History, minus pages already shown as an open tab or as the Enter action.
+  const shown = new Set([...tabs.map((t) => t.tab.url), go?.url, best?.url])
+  for (const item of history) if (!shown.has(item.url)) results.push({ kind: 'history', item })
 
   const archived = state.archive
     .map((item, index) => ({ item, index, s: score(query, item.title, item.url) }))
@@ -69,13 +87,32 @@ export function CommandBar({ state }: { state: UIState }) {
     })
   }, [openKey])
 
-  const results = useMemo(() => buildResults(state, input), [state, input])
+  // History suggestions come from the main process; ask shortly after typing pauses.
+  const [history, setHistory] = useState<HistoryItem[]>([])
+  useEffect(() => {
+    const text = input.trim()
+    if (!text) {
+      setHistory([])
+      return
+    }
+    let stale = false
+    const timer = setTimeout(() => {
+      void window.browser.query<HistoryItem[]>({ type: 'history.suggest', input: text }).then((rows) => !stale && setHistory(rows ?? []))
+    }, 40)
+    return () => {
+      stale = true
+      clearTimeout(timer)
+    }
+  }, [input])
+
+  const results = useMemo(() => buildResults(state, input, history), [state, input, history])
   if (!bar) return null
 
   const close = () => dispatch({ type: 'commandBar.close' })
   const run = (r: Result | undefined) => {
     if (!r) return
     if (r.kind === 'go') dispatch({ type: 'tab.open', input: r.input, mode: bar.mode })
+    else if (r.kind === 'history') dispatch({ type: 'tab.open', input: r.item.url, mode: bar.mode })
     else if (r.kind === 'tab') {
       dispatch({ type: 'commandBar.close' })
       dispatch({ type: 'tab.activate', id: r.tab.id })
@@ -124,7 +161,7 @@ export function CommandBar({ state }: { state: UIState }) {
           <ul className="command-results">
             {results.map((r, i) => (
               <li
-                key={r.kind === 'tab' ? r.tab.id : r.kind === 'archive' ? `a${r.index}` : 'go'}
+                key={r.kind === 'tab' ? r.tab.id : r.kind === 'archive' ? `a${r.index}` : r.kind === 'history' ? `h${r.item.url}` : 'go'}
                 className={`command-result ${i === selected ? 'selected' : ''}`}
                 onMouseMove={() => setSelected(i)}
                 onMouseDown={(e) => {
@@ -151,6 +188,15 @@ function ResultRow({ r, engine, state }: { r: Result; engine: string; state: UIS
         </span>
         <span className="result-title">{r.input}</span>
         <span className="result-meta">{r.isSearch ? `${engine} Search` : displayHost(r.url)}</span>
+      </>
+    )
+  }
+  if (r.kind === 'history') {
+    return (
+      <>
+        <Favicon src={r.item.favicon ?? undefined} url={r.item.url} />
+        <span className="result-title">{r.item.title || displayHost(r.item.url)}</span>
+        <span className="result-meta">{displayHost(r.item.url)}</span>
       </>
     )
   }
