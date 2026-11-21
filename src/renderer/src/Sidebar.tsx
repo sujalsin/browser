@@ -1,5 +1,5 @@
-import { createContext, useContext, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode, type WheelEvent } from 'react'
-import type { Folder, ListRef, Tab, UIState } from '../../shared/types'
+import { createContext, memo, useContext, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode, type WheelEvent } from 'react'
+import type { Folder, ListRef, Tab, TabRuntime, UIState } from '../../shared/types'
 import { boostsFor } from '../../shared/boosts'
 import { displayHost } from '../../shared/url'
 import { Favicon } from './Favicon'
@@ -13,15 +13,28 @@ type DropPos = 'before' | 'after' | 'into'
 interface DragState {
   dragging: { id: string; isFolder: boolean } | null
   over: { key: string; pos: DropPos } | null
+}
+
+/**
+ * What a row needs to take part in dragging. It never changes, so rows don't
+ * re-render as the pointer moves during a drag; each row is told separately
+ * (its `drop` prop) when the drop marker is on it.
+ */
+interface DragApi {
+  get(): DragState
   setDragging(d: DragState['dragging']): void
   setOver(o: DragState['over']): void
 }
 
-const DragCtx = createContext<DragState | null>(null)
+const DragApiCtx = createContext<DragApi | null>(null)
+/** The current drag, for the parts that draw it (drop zones, the lists). */
+const DragCtx = createContext<DragState>({ dragging: null, over: null })
 
 function refKey(ref: ListRef) {
   return ref.type === 'folder' ? `folder:${ref.id}` : ref.type
 }
+
+const dropKey = (ref: ListRef, id: string) => `${refKey(ref)}#${id}`
 
 /**
  * Drag handlers for one sidebar item. `index` is its position in `ref`.
@@ -29,11 +42,11 @@ function refKey(ref: ListRef) {
  * favorites grid split left/right instead of top/bottom.
  */
 function useDraggable(id: string, ref: ListRef, index: number, opts: { folder?: Folder; horizontal?: boolean } = {}) {
-  const dnd = useContext(DragCtx)!
-  const key = `${refKey(ref)}#${id}`
+  const dnd = useContext(DragApiCtx)!
+  const key = dropKey(ref, id)
 
   const allowed = () => {
-    const d = dnd.dragging
+    const d = dnd.get().dragging
     if (!d || d.id === id) return false
     // Folders don't nest and can't be favorites.
     if (d.isFolder && (ref.type === 'folder' || ref.type === 'favorites')) return false
@@ -43,7 +56,7 @@ function useDraggable(id: string, ref: ListRef, index: number, opts: { folder?: 
   const posFor = (e: DragEvent): DropPos => {
     const r = e.currentTarget.getBoundingClientRect()
     const f = opts.horizontal ? (e.clientX - r.left) / r.width : (e.clientY - r.top) / r.height
-    if (opts.folder && !dnd.dragging?.isFolder) {
+    if (opts.folder && !dnd.get().dragging?.isFolder) {
       // Top edge: above the folder. Bottom edge of a collapsed folder: below it. Otherwise: into it.
       if (f < 0.3) return 'before'
       if (f > 0.75 && opts.folder.collapsed) return 'after'
@@ -54,7 +67,6 @@ function useDraggable(id: string, ref: ListRef, index: number, opts: { folder?: 
 
   return {
     draggable: true,
-    'data-drop': dnd.over?.key === key ? dnd.over.pos : undefined,
     onDragStart: (e: DragEvent) => {
       e.stopPropagation()
       e.dataTransfer.effectAllowed = 'move'
@@ -71,10 +83,11 @@ function useDraggable(id: string, ref: ListRef, index: number, opts: { folder?: 
       e.stopPropagation()
       e.dataTransfer.dropEffect = 'move'
       const pos = posFor(e)
-      if (dnd.over?.key !== key || dnd.over.pos !== pos) dnd.setOver({ key, pos })
+      const over = dnd.get().over
+      if (over?.key !== key || over.pos !== pos) dnd.setOver({ key, pos })
     },
     onDrop: (e: DragEvent) => {
-      const d = dnd.dragging
+      const d = dnd.get().dragging
       if (!d || !allowed()) return
       e.preventDefault()
       e.stopPropagation()
@@ -92,8 +105,9 @@ function useDraggable(id: string, ref: ListRef, index: number, opts: { folder?: 
 
 /** Drop area at the end of a list (and the whole area when the list is empty). */
 function EndDropZone({ listRef, length, label, inline }: { listRef: ListRef; length: number; label?: string; inline?: boolean }) {
-  const dnd = useContext(DragCtx)!
-  const key = `${refKey(listRef)}#end`
+  const dnd = useContext(DragCtx)
+  const api = useContext(DragApiCtx)!
+  const key = dropKey(listRef, 'end')
   const d = dnd.dragging
   const ok = !!d && !(d.isFolder && (listRef.type === 'folder' || listRef.type === 'favorites'))
   const Tag = inline ? 'div' : 'li'
@@ -105,15 +119,15 @@ function EndDropZone({ listRef, length, label, inline }: { listRef: ListRef; len
         if (!ok) return
         e.preventDefault()
         e.stopPropagation()
-        if (dnd.over?.key !== key) dnd.setOver({ key, pos: 'before' })
+        if (dnd.over?.key !== key) api.setOver({ key, pos: 'before' })
       }}
       onDrop={(e) => {
         if (!d || !ok) return
         e.preventDefault()
         e.stopPropagation()
         dispatch({ type: 'item.move', id: d.id, to: listRef, index: length })
-        dnd.setDragging(null)
-        dnd.setOver(null)
+        api.setDragging(null)
+        api.setOver(null)
       }}
     >
       {d && ok && length === 0 && label ? label : null}
@@ -123,12 +137,31 @@ function EndDropZone({ listRef, length, label, inline }: { listRef: ListRef; len
 
 // ───────────────────────────── sidebar ─────────────────────────────
 
+/** Looked up once per update instead of searching the lists for every row. */
+interface Ctx {
+  state: UIState
+  tabs: Map<string, Tab>
+  folders: Map<string, Folder>
+  /** Tabs that are part of a split view. */
+  inSplit: Set<string>
+  editing: UIState['editing']
+  startEdit(e: NonNullable<UIState['editing']>): void
+  endEdit(): void
+}
+
+const SidebarCtx = createContext<Ctx | null>(null)
+
 export function Sidebar({ state }: { state: UIState }) {
   const [showArchive, setShowArchive] = useState(false)
   const [dragging, setDragging] = useState<DragState['dragging']>(null)
   const [over, setOver] = useState<DragState['over']>(null)
   const [localEdit, setLocalEdit] = useState<UIState['editing']>(null)
   const swipe = useRef({ dx: 0, lockedUntil: 0 })
+
+  const drag: DragState = { dragging, over }
+  const dragRef = useRef(drag)
+  dragRef.current = drag
+  const dragApi = useMemo<DragApi>(() => ({ get: () => dragRef.current, setDragging, setOver }), [])
 
   const space = state.spaces.find((s) => s.id === state.activeSpaceId) ?? state.spaces[0]
   const active = state.tabs.find((t) => t.id === state.activeTabId)
@@ -139,6 +172,9 @@ export function Sidebar({ state }: { state: UIState }) {
 
   const ctx: Ctx = {
     state,
+    tabs: new Map(state.tabs.map((t) => [t.id, t])),
+    folders: new Map(state.folders.map((f) => [f.id, f])),
+    inSplit: new Set(state.splits.flatMap((sp) => sp.tabIds)),
     editing,
     startEdit: (e) => setLocalEdit(e),
     endEdit: () => {
@@ -160,161 +196,184 @@ export function Sidebar({ state }: { state: UIState }) {
   }
 
   return (
-    <DragCtx.Provider value={{ dragging, over, setDragging, setOver }}>
-      <SidebarCtx.Provider value={ctx}>
-        <aside className={`sidebar ${dragging ? 'is-dragging' : ''}`} onWheel={onWheel}>
-          <header className="sidebar-top">
-            <div className="traffic-light-space" />
-            <div className="nav-buttons">
-              <button className="icon-btn" title="Toggle sidebar (⌘S)" onClick={() => dispatch({ type: 'sidebar.toggle' })}>
-                <Icon name="sidebar" />
-              </button>
-              <button className="icon-btn" title="Back (⌘[)" disabled={!rt?.canGoBack} onClick={() => dispatch({ type: 'nav.back' })}>
-                <Icon name="back" />
-              </button>
-              <button className="icon-btn" title="Forward (⌘])" disabled={!rt?.canGoForward} onClick={() => dispatch({ type: 'nav.forward' })}>
-                <Icon name="forward" />
-              </button>
-              <button className="icon-btn" title="Reload (⌘R)" disabled={!rt} onClick={() => dispatch({ type: 'nav.reload' })}>
-                <Icon name="reload" />
-              </button>
-            </div>
-          </header>
-
-          <div className="url-row">
-            <div className="url-pill">
-              {active && (
-                <button
-                  className={`site-btn ${active.url.startsWith('http://') ? 'insecure' : ''}`}
-                  title={active.url.startsWith('https://') ? 'Connection is secure — site info' : 'Site info'}
-                  onClick={() => dispatch({ type: 'site.info' })}
-                >
-                  <Icon name={active.url.startsWith('https://') ? 'lock' : 'info'} size={13} />
+    <DragApiCtx.Provider value={dragApi}>
+      <DragCtx.Provider value={drag}>
+        <SidebarCtx.Provider value={ctx}>
+          <aside className={`sidebar ${dragging ? 'is-dragging' : ''}`} onWheel={onWheel}>
+            <header className="sidebar-top">
+              <div className="traffic-light-space" />
+              <div className="nav-buttons">
+                <button className="icon-btn" title="Hide sidebar (⌘S)" onClick={() => dispatch({ type: 'sidebar.toggle' })}>
+                  <Icon name="sidebar" />
                 </button>
-              )}
-              <button className="url-main" title="Edit URL (⌘L)" onClick={() => dispatch({ type: 'commandBar.open', mode: active ? 'edit' : 'new' })}>
-                {active && state.hoverUrl ? (
-                  // Hovering a link: show where it goes (Chrome's status bubble, without an extra view).
-                  <span className="url-text hover" title={state.hoverUrl}>
-                    → {state.hoverUrl.replace(/^https?:\/\/(www\.)?/, '')}
-                  </span>
-                ) : active ? (
-                  <>
-                    <span className="url-text">{displayHost(active.url)}</span>
-                    {rt?.translated && (
-                      <span className="url-boost" title={`Translated to ${rt.translated}`}>
-                        <Icon name="translate" size={13} />
-                      </span>
-                    )}
-                    {boostsFor(state.boosts, active.url).length > 0 && (
-                      <span className="url-boost" title="A Boost is active on this site">
-                        <Icon name="boost" size={12} />
-                      </span>
-                    )}
-                  </>
+                <button className="icon-btn" title="Back (⌘[)" disabled={!rt?.canGoBack} onClick={() => dispatch({ type: 'nav.back' })}>
+                  <Icon name="back" />
+                </button>
+                <button className="icon-btn" title="Forward (⌘])" disabled={!rt?.canGoForward} onClick={() => dispatch({ type: 'nav.forward' })}>
+                  <Icon name="forward" />
+                </button>
+                <button className="icon-btn" title="Reload (⌘R)" disabled={!rt} onClick={() => dispatch({ type: 'nav.reload' })}>
+                  <Icon name="reload" />
+                </button>
+              </div>
+            </header>
+
+            <AddressField state={state} active={active} rt={rt} />
+
+            {space.private ? (
+              <div className="private-banner" title="History isn’t saved; cookies are discarded when you close this space. Extensions are off.">
+                <Icon name="private" size={14} /> Private — nothing is saved
+                <button className="lib-button small" onClick={() => dispatch({ type: 'space.closePrivate', id: space.id })}>
+                  Close
+                </button>
+              </div>
+            ) : (
+              <div className="extensions-row">
+                <browser-action-list partition={space.partition} alignment="bottom right" />
+              </div>
+            )}
+
+            <div className="tab-scroll">
+              <Favorites ids={favorites} />
+
+              <div className="space-header" onContextMenu={(e) => (e.preventDefault(), dispatch({ type: 'space.menu', id: space.id }))}>
+                {!space.private && <span className="space-chip" />}
+                {editing?.type === 'space' && editing.id === space.id ? (
+                  <EditableName value={space.name} onCommit={(name) => dispatch({ type: 'space.rename', id: space.id, name })} />
                 ) : (
-                  <span className="url-placeholder">Search or enter URL…</span>
+                  <span className="space-title" onDoubleClick={() => setLocalEdit({ type: 'space', id: space.id })} title="Double-click to rename">
+                    {space.name}
+                  </span>
                 )}
-              </button>
-            </div>
-            <ShieldsButton state={state} />
-          </div>
-
-          {space.private ? (
-            <div className="private-banner" title="History isn’t saved; cookies are discarded when you close this space. Extensions are off.">
-              <Icon name="private" size={14} /> Private — nothing is saved
-              <button className="lib-button small" onClick={() => dispatch({ type: 'space.closePrivate', id: space.id })}>
-                Close
-              </button>
-            </div>
-          ) : (
-            <div className="extensions-row">
-              <browser-action-list partition={space.partition} alignment="bottom right" />
-            </div>
-          )}
-
-          <div className="tab-scroll">
-            <Favorites ids={favorites} />
-
-            <div className="space-header" onContextMenu={(e) => (e.preventDefault(), dispatch({ type: 'space.menu', id: space.id }))}>
-              {editing?.type === 'space' && editing.id === space.id ? (
-                <EditableName value={space.name} onCommit={(name) => dispatch({ type: 'space.rename', id: space.id, name })} />
-              ) : (
-                <span className="space-title" onDoubleClick={() => setLocalEdit({ type: 'space', id: space.id })} title="Double-click to rename">
-                  {space.name}
-                </span>
-              )}
-              <button className="icon-btn small" title="New folder" onClick={() => dispatch({ type: 'folder.create', list: 'pinned' })}>
-                <Icon name="folderPlus" size={14} />
-              </button>
-              <button className="icon-btn small" title="Space options" onClick={() => dispatch({ type: 'space.menu', id: space.id })}>
-                <Icon name="more" size={14} />
-              </button>
-            </div>
-
-            <ItemList ids={space.pinned} listRef={{ type: 'pinned' }} dropLabel="Drop here to pin" />
-
-            <div className="divider-row">
-              <div className="divider" />
-              {hasToday && (
-                <button className="clear-btn" title="Close duplicates and group tabs by site (⇧⌘Y)" onClick={() => dispatch({ type: 'tabs.tidy' })}>
-                  <Icon name="tidy" size={11} /> Tidy
+                <button className="icon-btn small" title="New folder" onClick={() => dispatch({ type: 'folder.create', list: 'pinned' })}>
+                  <Icon name="folderPlus" size={14} />
                 </button>
-              )}
-              {hasToday && (
-                <button className="clear-btn" title="Archive all Today tabs (⇧⌘K)" onClick={() => dispatch({ type: 'tabs.clearToday' })}>
-                  <Icon name="arrowDown" size={11} /> Clear
+                <button className="icon-btn small" title="Space options" onClick={() => dispatch({ type: 'space.menu', id: space.id })}>
+                  <Icon name="more" size={14} />
                 </button>
-              )}
+              </div>
+
+              <ItemList ids={space.pinned} listRef={{ type: 'pinned' }} dropLabel="Drop here to pin" />
+
+              <div className="divider-row">
+                <div className="divider" />
+                {hasToday && (
+                  <button className="clear-btn" title="Close duplicates and group tabs by site (⇧⌘Y)" onClick={() => dispatch({ type: 'tabs.tidy' })}>
+                    <Icon name="tidy" size={11} /> Tidy
+                  </button>
+                )}
+                {hasToday && (
+                  <button className="clear-btn" title="Archive all Today tabs (⇧⌘K)" onClick={() => dispatch({ type: 'tabs.clearToday' })}>
+                    <Icon name="arrowDown" size={11} /> Clear
+                  </button>
+                )}
+              </div>
+
+              <button className="new-tab-row" onClick={() => dispatch({ type: 'commandBar.open', mode: 'new' })}>
+                <Icon name="plus" /> New Tab
+              </button>
+
+              <ItemList ids={space.today} listRef={{ type: 'today' }} dropLabel="Drop here to unpin" />
             </div>
 
-            <button className="new-tab-row" onClick={() => dispatch({ type: 'commandBar.open', mode: 'new' })}>
-              <Icon name="plus" /> New Tab
-            </button>
+            {showArchive && <ArchivePanel state={state} />}
 
-            <ItemList ids={space.today} listRef={{ type: 'today' }} dropLabel="Drop here to unpin" />
-          </div>
-
-          {showArchive && <ArchivePanel state={state} />}
-
-          <footer className="sidebar-bottom">
-            <SpaceSwitcher state={state} />
-            <DownloadsButton state={state} />
-            <button className="icon-btn" title="New space" onClick={() => dispatch({ type: 'space.addMenu' })}>
-              <Icon name="plus" size={15} />
-            </button>
-            <button className={`icon-btn ${showArchive ? 'on' : ''}`} title="Archived tabs" onClick={() => setShowArchive((v) => !v)}>
-              <Icon name="archive" />
-            </button>
-          </footer>
-        </aside>
-      </SidebarCtx.Provider>
-    </DragCtx.Provider>
+            <footer className="sidebar-bottom">
+              <button className={`icon-btn ${showArchive ? 'on' : ''}`} title="Archived tabs" onClick={() => setShowArchive((v) => !v)}>
+                <Icon name="archive" />
+              </button>
+              <DownloadsButton state={state} />
+              <SpaceSwitcher state={state} />
+              <button className="icon-btn" title="New space" onClick={() => dispatch({ type: 'space.addMenu' })}>
+                <Icon name="plus" size={15} />
+              </button>
+            </footer>
+          </aside>
+        </SidebarCtx.Provider>
+      </DragCtx.Provider>
+    </DragApiCtx.Provider>
   )
 }
 
-interface Ctx {
-  state: UIState
-  editing: UIState['editing']
-  startEdit(e: NonNullable<UIState['editing']>): void
-  endEdit(): void
+/** Site info, the address (opens the command bar) and Shields, in one field. */
+function AddressField({ state, active, rt }: { state: UIState; active?: Tab; rt?: TabRuntime }) {
+  const secure = !!active && active.url.startsWith('https://')
+  return (
+    <div className={`url-pill ${rt?.loading ? 'loading' : ''}`}>
+      {active && (
+        <button
+          className={`site-btn ${active.url.startsWith('http://') ? 'insecure' : ''}`}
+          title={secure ? 'Connection is secure — site info' : 'Site info'}
+          onClick={() => dispatch({ type: 'site.info' })}
+        >
+          <Icon name={secure ? 'lock' : 'info'} size={13} />
+        </button>
+      )}
+      <button className="url-main" title="Edit URL (⌘L)" onClick={() => dispatch({ type: 'commandBar.open', mode: active ? 'edit' : 'new' })}>
+        {active && state.hoverUrl ? (
+          // Hovering a link: show where it goes (Chrome's status bubble, without an extra view).
+          <span className="url-text hover" title={state.hoverUrl}>
+            → {state.hoverUrl.replace(/^https?:\/\/(www\.)?/, '')}
+          </span>
+        ) : active ? (
+          <>
+            <span className="url-text">{displayHost(active.url)}</span>
+            {rt?.translated && (
+              <span className="url-boost" title={`Translated to ${rt.translated}`}>
+                <Icon name="translate" size={13} />
+              </span>
+            )}
+            {boostsFor(state.boosts, active.url).length > 0 && (
+              <span className="url-boost" title="A Boost is active on this site">
+                <Icon name="boost" size={12} />
+              </span>
+            )}
+          </>
+        ) : (
+          <span className="url-placeholder">Search or enter URL…</span>
+        )}
+      </button>
+      <ShieldsButton state={state} />
+    </div>
+  )
 }
-
-const SidebarCtx = createContext<Ctx | null>(null)
 
 // ───────────────────────────── lists ─────────────────────────────
 
 function ItemList({ ids, listRef, dropLabel }: { ids: string[]; listRef: ListRef; dropLabel?: string }) {
-  const { state } = useContext(SidebarCtx)!
+  const { state, tabs, folders, inSplit } = useContext(SidebarCtx)!
+  const { over } = useContext(DragCtx)
   const items: ReactNode[] = []
   ids.forEach((id, index) => {
-    const folder = state.folders.find((f) => f.id === id)
+    const folder = folders.get(id)
     if (folder) {
-      items.push(<FolderItem key={id} folder={folder} listRef={listRef} index={index} />)
+      items.push(<FolderItem key={id} folder={folder} listRef={listRef} index={index} drop={over?.key === dropKey(listRef, id) ? over.pos : undefined} />)
       return
     }
-    const tab = state.tabs.find((t) => t.id === id)
-    if (tab) items.push(<TabRow key={id} tab={tab} listRef={listRef} index={index} />)
+    const tab = tabs.get(id)
+    if (!tab) return
+    const rt = state.runtime[id]
+    items.push(
+      <TabRow
+        key={id}
+        id={id}
+        title={tab.title}
+        url={tab.url}
+        favicon={tab.favicon}
+        keeps={tab.kind !== 'today'}
+        listType={listRef.type}
+        folderId={listRef.type === 'folder' ? listRef.id : undefined}
+        index={index}
+        active={state.activeTabId === id}
+        awake={!!rt}
+        loaded={!!rt?.loaded}
+        loading={!!rt?.loading}
+        audible={!!rt?.audible}
+        muted={!!rt?.muted}
+        inSplit={inSplit.has(id)}
+        drop={over?.key === dropKey(listRef, id) ? over.pos : undefined}
+      />,
+    )
   })
   return (
     <ul className="tab-list">
@@ -324,7 +383,7 @@ function ItemList({ ids, listRef, dropLabel }: { ids: string[]; listRef: ListRef
   )
 }
 
-function FolderItem({ folder, listRef, index }: { folder: Folder; listRef: ListRef; index: number }) {
+function FolderItem({ folder, listRef, index, drop }: { folder: Folder; listRef: ListRef; index: number; drop?: DropPos }) {
   const { editing, startEdit } = useContext(SidebarCtx)!
   const drag = useDraggable(folder.id, listRef, index, { folder })
   const isEditing = editing?.type === 'folder' && editing.id === folder.id
@@ -332,6 +391,7 @@ function FolderItem({ folder, listRef, index }: { folder: Folder; listRef: ListR
     <li className="folder">
       <div
         {...drag}
+        data-drop={drop}
         className="folder-row"
         onClick={() => !isEditing && dispatch({ type: 'folder.toggle', id: folder.id })}
         onDoubleClick={(e) => {
@@ -344,7 +404,7 @@ function FolderItem({ folder, listRef, index }: { folder: Folder; listRef: ListR
         }}
       >
         <Icon name="chevron" size={12} className={`folder-chevron ${folder.collapsed ? '' : 'open'}`} />
-        <Icon name="folder" size={15} className="folder-icon" />
+        <Icon name={folder.collapsed ? 'folder' : 'folderOpen'} size={15} className="folder-icon" />
         {isEditing ? (
           <EditableName value={folder.name} onCommit={(name) => dispatch({ type: 'folder.rename', id: folder.id, name })} />
         ) : (
@@ -361,35 +421,59 @@ function FolderItem({ folder, listRef, index }: { folder: Folder; listRef: ListR
   )
 }
 
-function TabRow({ tab, listRef, index }: { tab: Tab; listRef: ListRef; index: number }) {
-  const { state } = useContext(SidebarCtx)!
-  const drag = useDraggable(tab.id, listRef, index)
-  const rt = state.runtime[tab.id]
-  const isActive = state.activeTabId === tab.id
-  const keeps = tab.kind !== 'today'
+interface TabRowProps {
+  id: string
+  title: string
+  url: string
+  favicon?: string
+  /** Pinned tabs stay in the list when closed (closing only unloads them). */
+  keeps: boolean
+  listType: ListRef['type']
+  folderId?: string
+  index: number
+  active: boolean
+  /** Has a live page (not asleep). */
+  awake: boolean
+  loaded: boolean
+  loading: boolean
+  audible: boolean
+  muted: boolean
+  inSplit: boolean
+  drop?: DropPos
+}
+
+/**
+ * One tab. Takes plain values rather than the whole state, so a row is only
+ * redrawn when something about that tab changed. The browser sends a fresh
+ * state many times a second while pages load or the pointer crosses links.
+ */
+const TabRow = memo(function TabRow(p: TabRowProps) {
+  const listRef: ListRef = p.listType === 'folder' ? { type: 'folder', id: p.folderId! } : { type: p.listType }
+  const drag = useDraggable(p.id, listRef, p.index)
   // Pinned tabs only show a button when loaded (it unloads them, like Arc).
-  const showClose = !keeps || rt?.loaded
+  const showClose = !p.keeps || p.loaded
 
   return (
     <li
       {...drag}
-      className={`tab-row ${isActive ? 'active' : ''} ${rt ? '' : 'asleep'}`}
+      data-drop={p.drop}
+      className={`tab-row ${p.active ? 'active' : ''} ${p.awake ? '' : 'asleep'}`}
       onMouseDown={(e) => {
-        if (e.button === 0) dispatch({ type: 'tab.activate', id: tab.id })
+        if (e.button === 0) dispatch({ type: 'tab.activate', id: p.id })
       }}
       onAuxClick={(e) => {
-        if (e.button === 1) dispatch({ type: 'tab.close', id: tab.id })
+        if (e.button === 1) dispatch({ type: 'tab.close', id: p.id })
       }}
       onContextMenu={(e) => {
         e.preventDefault()
-        dispatch({ type: 'tab.contextMenu', id: tab.id })
+        dispatch({ type: 'tab.contextMenu', id: p.id })
       }}
-      title={tab.url}
+      title={p.url}
     >
-      <Favicon src={tab.favicon} loading={rt?.loading} url={tab.url} />
-      <span className="tab-title">{tab.title || displayHost(tab.url)}</span>
-      {rt?.audible && <Icon name={rt.muted ? 'muted' : 'speaker'} size={13} className="tab-audio" />}
-      {state.splits.some((sp) => sp.tabIds.includes(tab.id)) && (
+      <Favicon src={p.favicon} loading={p.loading} url={p.url} />
+      <span className="tab-title">{p.title || displayHost(p.url)}</span>
+      {p.audible && <Icon name={p.muted ? 'muted' : 'speaker'} size={13} className="tab-audio" />}
+      {p.inSplit && (
         <span title="In split view">
           <Icon name="split" size={13} className="tab-audio" />
         </span>
@@ -397,57 +481,84 @@ function TabRow({ tab, listRef, index }: { tab: Tab; listRef: ListRef; index: nu
       {showClose && (
         <button
           className="tab-close"
-          title={keeps ? 'Unload tab' : 'Close tab (⌘W)'}
+          title={p.keeps ? 'Unload tab' : 'Close tab (⌘W)'}
           draggable={false}
           onMouseDown={(e) => e.stopPropagation()}
-          onClick={() => dispatch({ type: 'tab.close', id: tab.id })}
+          onClick={() => dispatch({ type: 'tab.close', id: p.id })}
         >
-          <Icon name={keeps ? 'minus' : 'close'} size={12} />
+          <Icon name={p.keeps ? 'minus' : 'close'} size={12} />
         </button>
       )}
     </li>
   )
-}
+})
 
 function Favorites({ ids }: { ids: string[] }) {
-  const { state } = useContext(SidebarCtx)!
-  const dnd = useContext(DragCtx)!
+  const { state, tabs } = useContext(SidebarCtx)!
+  const dnd = useContext(DragCtx)
+  const listRef: ListRef = { type: 'favorites' }
   if (!ids.length && !dnd.dragging) return null
   return (
     <div className={`favorites ${ids.length ? '' : 'empty'}`}>
       {ids.map((id, index) => {
-        const tab = state.tabs.find((t) => t.id === id)
-        return tab ? <FavoriteTile key={id} tab={tab} index={index} /> : null
+        const tab = tabs.get(id)
+        if (!tab) return null
+        const rt = state.runtime[id]
+        return (
+          <FavoriteTile
+            key={id}
+            id={id}
+            title={tab.title}
+            url={tab.url}
+            favicon={tab.favicon}
+            index={index}
+            active={state.activeTabId === id}
+            awake={!!rt}
+            loading={!!rt?.loading}
+            drop={dnd.over?.key === dropKey(listRef, id) ? dnd.over.pos : undefined}
+          />
+        )
       })}
-      <EndDropZone listRef={{ type: 'favorites' }} length={ids.length} label="Drop here to add to Favorites" inline />
+      <EndDropZone listRef={listRef} length={ids.length} label="Drop here to add to Favorites" inline />
     </div>
   )
 }
 
-function FavoriteTile({ tab, index }: { tab: Tab; index: number }) {
-  const { state } = useContext(SidebarCtx)!
-  const drag = useDraggable(tab.id, { type: 'favorites' }, index, { horizontal: true })
-  const rt = state.runtime[tab.id]
+interface FavoriteProps {
+  id: string
+  title: string
+  url: string
+  favicon?: string
+  index: number
+  active: boolean
+  awake: boolean
+  loading: boolean
+  drop?: DropPos
+}
+
+const FavoriteTile = memo(function FavoriteTile(p: FavoriteProps) {
+  const drag = useDraggable(p.id, { type: 'favorites' }, p.index, { horizontal: true })
   return (
     <div
       {...drag}
-      className={`favorite ${state.activeTabId === tab.id ? 'active' : ''} ${rt ? 'loaded' : ''}`}
-      title={tab.title || tab.url}
+      data-drop={p.drop}
+      className={`favorite ${p.active ? 'active' : ''} ${p.awake ? 'loaded' : ''}`}
+      title={p.title || p.url}
       onMouseDown={(e) => {
-        if (e.button === 0) dispatch({ type: 'tab.activate', id: tab.id })
+        if (e.button === 0) dispatch({ type: 'tab.activate', id: p.id })
       }}
       onAuxClick={(e) => {
-        if (e.button === 1) dispatch({ type: 'tab.close', id: tab.id })
+        if (e.button === 1) dispatch({ type: 'tab.close', id: p.id })
       }}
       onContextMenu={(e) => {
         e.preventDefault()
-        dispatch({ type: 'tab.contextMenu', id: tab.id })
+        dispatch({ type: 'tab.contextMenu', id: p.id })
       }}
     >
-      <Favicon src={tab.favicon} loading={rt?.loading} url={tab.url} />
+      <Favicon src={p.favicon} loading={p.loading} url={p.url} />
     </div>
   )
-}
+})
 
 // ───────────────────────────── bits ─────────────────────────────
 

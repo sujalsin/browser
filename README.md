@@ -45,6 +45,7 @@ The Bitwarden button appears under the address pill in the sidebar.
 | ⌘L | Edit current URL |
 | ⌘W / ⇧⌘T | Close tab / reopen closed tab |
 | ⌘S | Toggle sidebar |
+| ⌃⌘F | Full screen |
 | ⇧⌘C | Copy URL |
 | ⌘D | Pin / unpin tab |
 | ⇧⌘K | Clear Today tabs (moves them to the archive) |

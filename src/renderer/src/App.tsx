@@ -1,9 +1,16 @@
 import type { CSSProperties } from 'react'
-import { SIDEBAR_WIDTH, VIEW_GAP } from '../../shared/constants'
+import { SIDEBAR_TOP_HEIGHT, SIDEBAR_WIDTH, VIEW_GAP, VIEW_RADIUS } from '../../shared/constants'
 import type { TabRuntime, UIState } from '../../shared/types'
 import { displayHost } from '../../shared/url'
+import { Icon } from './Icon'
 import { Sidebar } from './Sidebar'
 import { dispatch, useBrowserState } from './useBrowserState'
+
+/** Class names every surface's root shares: the system, full screen, private browsing. */
+export function rootClass(state: UIState): string {
+  const isPrivate = !!state.spaces.find((s) => s.id === state.activeSpaceId)?.private
+  return `${state.platform} ${state.fullscreen ? 'fullscreen' : ''} ${isPrivate ? 'private' : ''}`
+}
 
 /** CSS variables shared by the window UI and the overlay. */
 export function themeStyle(state: UIState): CSSProperties {
@@ -12,6 +19,8 @@ export function themeStyle(state: UIState): CSSProperties {
     '--space': space.color,
     '--sidebar-width': `${SIDEBAR_WIDTH}px`,
     '--gap': `${VIEW_GAP}px`,
+    '--top': `${SIDEBAR_TOP_HEIGHT}px`,
+    '--radius-page': `${VIEW_RADIUS}px`,
   }
   // A second color turns the frame into a gradient, like Arc's space themes.
   if (space.gradient) {
@@ -28,12 +37,14 @@ export function App() {
   const isPrivate = !!state.spaces.find((s) => s.id === state.activeSpaceId)?.private
 
   return (
-    <div className={`window ${state.platform} ${isPrivate ? 'private' : ''}`} style={themeStyle(state)}>
+    <div className={`window ${rootClass(state)}`} style={themeStyle(state)}>
       {state.sidebarVisible && !state.htmlFullscreen && <Sidebar state={state} />}
       {/* Sidebar hidden: hovering the left edge slides it in over the page. */}
       {hidden && <div className="edge-reveal" onMouseEnter={() => dispatch({ type: 'sidebar.peek', open: true })} />}
       <main className="content" style={{ left: state.sidebarVisible ? SIDEBAR_WIDTH : VIEW_GAP }}>
         <div className="drag-strip" />
+        {/* In split view each page fills its own half; there is no single card to draw. */}
+        {!state.splitView && <div className="page-card" />}
         {!state.activeTabId && <EmptyState isPrivate={isPrivate} />}
         {state.activeTabId && !state.splitView && state.runtime[state.activeTabId]?.error && <LoadError error={state.runtime[state.activeTabId].error!} />}
       </main>
@@ -46,6 +57,9 @@ function EmptyState({ isPrivate }: { isPrivate: boolean }) {
   return (
     <div className="empty-state">
       <div className="empty-card">
+        <div className="empty-mark">
+          <Icon name={isPrivate ? 'private' : 'tab'} size={24} />
+        </div>
         <h1>{isPrivate ? 'Private browsing' : 'Nothing open'}</h1>
         {isPrivate && (
           <p className="private-note">
@@ -69,6 +83,9 @@ function LoadError({ error }: { error: NonNullable<TabRuntime['error']> }) {
   return (
     <div className="empty-state">
       <div className="empty-card">
+        <div className="empty-mark">
+          <Icon name="globe" size={24} />
+        </div>
         <h1>{offline ? 'Can’t reach this site' : 'This page didn’t load'}</h1>
         <p className="error-url">{displayHost(error.url)}</p>
         <p className="error-code">{error.description}</p>

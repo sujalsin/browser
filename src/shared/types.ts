@@ -212,6 +212,8 @@ export interface UIState extends PersistedState {
   runtime: Record<string, TabRuntime>
   commandBar: CommandBarState | null
   htmlFullscreen: boolean
+  /** The window fills the screen (macOS full screen): no window buttons to leave room for. */
+  fullscreen: boolean
   platform: string
   /** Sidebar temporarily shown over the page while it is hidden (hover at left edge). */
   peek: boolean

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { themeStyle } from './App'
+import { rootClass, themeStyle } from './App'
 import { Sidebar } from './Sidebar'
 import { CommandBar } from './CommandBar'
 import { Library } from './Library'
@@ -16,7 +16,7 @@ export function Overlay() {
   const state = useBrowserState()
   if (!state) return null
   return (
-    <div className={`overlay-root ${state.platform} ${state.spaces.find((s) => s.id === state.activeSpaceId)?.private ? 'private' : ''}`} style={themeStyle(state)}>
+    <div className={`overlay-root ${rootClass(state)}`} style={themeStyle(state)}>
       {state.auth ? (
         <AuthPrompt key={`${state.auth.host}|${state.auth.realm}`} state={state} />
       ) : state.splitDragging ? (

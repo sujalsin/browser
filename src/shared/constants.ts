@@ -3,6 +3,8 @@ export const SIDEBAR_WIDTH = 248
 /** Gap between the window edge and the rounded web view. */
 export const VIEW_GAP = 8
 export const VIEW_RADIUS = 10
+/** Height of the strip at the top of the sidebar that holds the window buttons and drags the window. */
+export const SIDEBAR_TOP_HEIGHT = 44
 
 /** Arc-like space colors. */
 export const SPACE_COLORS = [

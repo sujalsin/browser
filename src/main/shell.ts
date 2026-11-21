@@ -1,10 +1,10 @@
-import { BrowserWindow, Menu, WebContentsView, app, clipboard, components, dialog, nativeTheme, session, shell as electronShell, type WebContents } from 'electron'
+import { BrowserWindow, Menu, WebContentsView, app, clipboard, components, dialog, nativeTheme, screen, session, shell as electronShell, type WebContents } from 'electron'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { homedir, totalmem } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
-import { SIDEBAR_WIDTH, SPACE_COLORS, VIEW_GAP, VIEW_RADIUS } from '../shared/constants'
+import { SIDEBAR_TOP_HEIGHT, SIDEBAR_WIDTH, SPACE_COLORS, VIEW_GAP, VIEW_RADIUS } from '../shared/constants'
 import type {
   Action,
   AppInfo,
@@ -64,6 +64,8 @@ import { showSiteInfo } from './site-info'
 import { restorePage, translatePage } from './translate'
 import { flushState, saveState } from './store'
 
+/** Where the macOS window buttons sit: centered in the strip at the top of the sidebar. */
+const WINDOW_BUTTONS = { x: 16, y: Math.round(SIDEBAR_TOP_HEIGHT / 2) - 6 }
 const MAX_CLOSED = 25
 const NEW_TAB_TITLE = 'New Tab'
 /** How often the sidebar UI is refreshed at most. Keeps busy pages cheap. */
@@ -180,7 +182,7 @@ export class BrowserShell {
       show: false,
       title: 'Browser',
       titleBarStyle: isMac ? 'hiddenInset' : 'default',
-      trafficLightPosition: { x: 16, y: 17 },
+      trafficLightPosition: WINDOW_BUTTONS,
       backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1b22' : '#e9e7f2',
       webPreferences: {
         preload: join(__dirname, '../preload/index.js'),
@@ -193,8 +195,12 @@ export class BrowserShell {
     this.win.loadURL(this.rendererUrl)
     this.win.once('ready-to-show', () => this.win.show())
     this.win.on('resize', () => this.layout())
-    this.win.on('enter-full-screen', () => this.layout())
-    this.win.on('leave-full-screen', () => this.layout())
+    for (const ev of ['enter-full-screen', 'leave-full-screen'] as const) {
+      this.win.on(ev as 'enter-full-screen', () => {
+        this.layout()
+        this.emit() // the sidebar drops the gap it leaves for the window buttons
+      })
+    }
     this.win.on('close', () => {
       saveState(this.state)
       flushState()
@@ -269,6 +275,7 @@ export class BrowserShell {
       runtime: this.runtime,
       commandBar: this.commandBar,
       htmlFullscreen: !!this.fullscreenTab,
+      fullscreen: this.win.isFullScreen(),
       platform: process.platform,
       peek: this.peek,
       shieldsStatus: this.shields?.getStatus() ?? { ready: false, updating: false },
@@ -402,10 +409,14 @@ export class BrowserShell {
     }
   }
 
-  /** macOS traffic lights live in the sidebar; hide them when it is hidden. */
+  /**
+   * macOS window buttons live in the sidebar: hide them when it is hidden. The
+   * hover sidebar floats a little in from the window's corner, so they move in with it.
+   */
   private applyWindowButtons() {
     if (process.platform !== 'darwin' || this.win.isDestroyed()) return
     this.win.setWindowButtonVisibility(this.state.sidebarVisible || this.peek)
+    this.win.setWindowButtonPosition(this.peek ? { x: WINDOW_BUTTONS.x + VIEW_GAP, y: WINDOW_BUTTONS.y + VIEW_GAP } : WINDOW_BUTTONS)
   }
 
   /** Show tab `id` (and its split partner) in the content area, or nothing. */
@@ -1228,10 +1239,47 @@ export class BrowserShell {
     this.emit()
   }
 
+  /**
+   * The pointer left the hover sidebar, as far as its page can tell. But the top
+   * strip of the sidebar (the window buttons and the area you drag the window by)
+   * belongs to macOS, not the page: moving onto it looks exactly like leaving.
+   * So check where the pointer really is, and while it is on that strip keep the
+   * sidebar open and watch until it moves on.
+   */
+  private peekLeft() {
+    if (!this.peek || this.peekWatch) return
+    if (this.pointerOverPeek() !== 'top') return this.setPeek(false)
+    this.peekWatch = setInterval(() => {
+      const where = this.peek ? this.pointerOverPeek() : 'outside'
+      if (where === 'top') return
+      this.stopPeekWatch()
+      // Back over the sidebar's own content: its page reports the next leave itself.
+      if (where === 'outside') this.setPeek(false)
+    }, 150)
+  }
+
+  private peekWatch: NodeJS.Timeout | null = null
+
+  private stopPeekWatch() {
+    if (this.peekWatch) clearInterval(this.peekWatch)
+    this.peekWatch = null
+  }
+
+  private pointerOverPeek(): 'top' | 'body' | 'outside' {
+    if (this.win.isDestroyed()) return 'outside'
+    const point = screen.getCursorScreenPoint()
+    const bounds = this.win.getContentBounds()
+    const x = point.x - bounds.x
+    const y = point.y - bounds.y
+    if (x < 0 || y < 0 || x > SIDEBAR_WIDTH || y > bounds.height) return 'outside'
+    return y <= SIDEBAR_TOP_HEIGHT ? 'top' : 'body'
+  }
+
   /** Arc-style: hovering the left edge shows the hidden sidebar over the page. */
   setPeek(open: boolean) {
     if (open && (this.state.sidebarVisible || this.fullscreenTab || this.commandBar || this.library)) return
     if (this.peek === open) return
+    this.stopPeekWatch()
     this.peek = open
     const overlay = this.ensureOverlay()
     if (open) this.win.contentView.addChildView(overlay)
@@ -2204,7 +2252,7 @@ export class BrowserShell {
       case 'sidebar.toggle':
         return this.toggleSidebar()
       case 'sidebar.peek':
-        return this.setPeek(!!action.open)
+        return action.open ? this.setPeek(true) : this.peekLeft()
       case 'tab.sleep':
         return this.sleepTab(action.id)
       case 'shields.menu':
