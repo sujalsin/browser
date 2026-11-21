@@ -182,26 +182,41 @@ export function Sidebar({ state }: { state: UIState }) {
           </header>
 
           <div className="url-row">
-            <button className="url-pill" title="Edit URL (⌘L)" onClick={() => dispatch({ type: 'commandBar.open', mode: active ? 'edit' : 'new' })}>
-              {active && state.hoverUrl ? (
-                // Hovering a link: show where it goes (Chrome's status bubble, without an extra view).
-                <span className="url-text hover" title={state.hoverUrl}>
-                  → {state.hoverUrl.replace(/^https?:\/\/(www\.)?/, '')}
-                </span>
-              ) : active ? (
-                <>
-                  {active.url.startsWith('https://') && <Icon name="lock" size={12} />}
-                  <span className="url-text">{displayHost(active.url)}</span>
-                  {boostsFor(state.boosts, active.url).length > 0 && (
-                    <span className="url-boost" title="A Boost is active on this site">
-                      <Icon name="boost" size={12} />
-                    </span>
-                  )}
-                </>
-              ) : (
-                <span className="url-placeholder">Search or enter URL…</span>
+            <div className="url-pill">
+              {active && (
+                <button
+                  className={`site-btn ${active.url.startsWith('http://') ? 'insecure' : ''}`}
+                  title={active.url.startsWith('https://') ? 'Connection is secure — site info' : 'Site info'}
+                  onClick={() => dispatch({ type: 'site.info' })}
+                >
+                  <Icon name={active.url.startsWith('https://') ? 'lock' : 'info'} size={13} />
+                </button>
               )}
-            </button>
+              <button className="url-main" title="Edit URL (⌘L)" onClick={() => dispatch({ type: 'commandBar.open', mode: active ? 'edit' : 'new' })}>
+                {active && state.hoverUrl ? (
+                  // Hovering a link: show where it goes (Chrome's status bubble, without an extra view).
+                  <span className="url-text hover" title={state.hoverUrl}>
+                    → {state.hoverUrl.replace(/^https?:\/\/(www\.)?/, '')}
+                  </span>
+                ) : active ? (
+                  <>
+                    <span className="url-text">{displayHost(active.url)}</span>
+                    {rt?.translated && (
+                      <span className="url-boost" title={`Translated to ${rt.translated}`}>
+                        <Icon name="translate" size={13} />
+                      </span>
+                    )}
+                    {boostsFor(state.boosts, active.url).length > 0 && (
+                      <span className="url-boost" title="A Boost is active on this site">
+                        <Icon name="boost" size={12} />
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <span className="url-placeholder">Search or enter URL…</span>
+                )}
+              </button>
+            </div>
             <ShieldsButton state={state} />
           </div>
 

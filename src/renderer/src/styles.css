@@ -204,14 +204,45 @@ button {
 .url-pill {
   display: flex;
   align-items: center;
-  gap: 6px;
   height: 34px;
-  padding: 0 10px;
+  padding: 0 4px;
   border-radius: 10px;
   background: var(--hover);
-  text-align: left;
   flex-shrink: 0;
   color: var(--text-dim);
+}
+
+/* The address itself: opens the command bar. */
+.url-main {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px;
+  text-align: left;
+  color: var(--text-dim);
+}
+
+/* Lock / info button: opens site info. */
+.site-btn {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--text-dim);
+}
+
+.site-btn:hover {
+  background: var(--press);
+  color: var(--text);
+}
+
+.site-btn.insecure {
+  color: #d98a00;
 }
 
 .url-pill:hover {

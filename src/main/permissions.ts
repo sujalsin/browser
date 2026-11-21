@@ -44,6 +44,17 @@ export function loadPermissions(db: BrowserDB | null) {
   }
 }
 
+/** The remembered answer for a site, or undefined if it will be asked. */
+export function getPermission(partition: string, origin: string, permission: string): boolean | undefined {
+  return decisions.get(keyOf(partition, origin, permission))
+}
+
+/** Set a site's answer from the lock menu: Allow, Block, or null to ask next time. */
+export function setPermission(partition: string, origin: string, permission: string, allowed: boolean | null) {
+  if (allowed === null) forgetPermission({ partition, origin, permission })
+  else remember(partition, origin, permission, allowed)
+}
+
 /** Forget a decision (Settings → Site Permissions → Reset); the site will ask again. */
 export function forgetPermission(p: Pick<SitePermission, 'partition' | 'origin' | 'permission'>) {
   decisions.delete(keyOf(p.partition, p.origin, p.permission))

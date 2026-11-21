@@ -56,6 +56,7 @@ import type { Downloads } from './downloads'
 import { forgetPartitionPermissions, forgetPermission } from './permissions'
 import { LittleWindow } from './little'
 import { Shields } from './shields'
+import { showSiteInfo } from './site-info'
 import { flushState, saveState } from './store'
 
 const MAX_CLOSED = 25
@@ -2121,6 +2122,17 @@ export class BrowserShell {
         return this.sleepTab(action.id)
       case 'shields.menu':
         return this.showShieldsMenu()
+      case 'site.info': {
+        const tab = this.activeTab()
+        if (!tab) return
+        return void showSiteInfo({
+          win: this.win,
+          url: tab.url,
+          partition: this.partitionOf(tab),
+          reload: () => this.activeWebContents()?.reload(),
+          openSettings: () => this.openLibrary('settings'),
+        })
+      }
       case 'tabs.clearToday':
         return this.clearToday()
       case 'archive.restore':

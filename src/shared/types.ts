@@ -84,6 +84,10 @@ export interface TabRuntime {
   muted: boolean
   /** Ads/trackers blocked on the current page. */
   blocked: number
+  /** Language name the page is currently translated to, if it is. */
+  translated?: string
+  /** A translation is in progress. */
+  translating?: boolean
   /** Set when the main frame failed to load (DNS error, offline, …). */
   error?: { code: number; description: string; url: string }
 }
@@ -350,6 +354,7 @@ export type Action =
   | { type: 'sidebar.peek'; open: boolean }
   | { type: 'tab.sleep'; id: string }
   | { type: 'shields.menu' }
+  | { type: 'site.info' }
   | { type: 'tabs.clearToday' }
   | { type: 'archive.restore'; index: number }
 
