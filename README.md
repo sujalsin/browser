@@ -163,6 +163,10 @@ not play in `npm run dev`.
 Settings shows at the bottom whether protected video is ready. The first launch downloads the
 module, so give it a minute online.
 
+Websites see this browser as Google Chrome (same user agent and browser "brand" details), because
+streaming and sign-in sites reject or misbehave for browsers they don't know. If a streaming site
+still shows an error, reload once, then try with Shields off for that site (the shield button).
+
 ## Shields (ad and tracker blocking)
 
 Click the shield next to the address in the sidebar. The number is how many ads and trackers

@@ -3,6 +3,8 @@ import { existsSync } from 'node:fs'
 import { join, parse } from 'node:path'
 import { ElectronChromeExtensions } from 'electron-chrome-extensions'
 import { IPC, type Action, type PersistedState, type Query } from '../shared/types'
+import { chromeUserAgent } from '../shared/identity'
+import { attachIdentityHeaders } from './identity'
 import { setupExtensions } from './extensions'
 import { installMenu } from './menu'
 import { Downloads } from './downloads'
@@ -16,9 +18,7 @@ app.setName('Browser')
 
 // Sites (notably Google sign-in) refuse browsers whose user agent mentions
 // Electron or an unknown product. Present a plain Chrome user agent.
-app.userAgentFallback = app.userAgentFallback.replace(/\s(\S+)\/(\S+)/g, (token, name: string) =>
-  ['AppleWebKit', 'Chrome', 'Safari'].includes(name) ? token : '',
-)
+app.userAgentFallback = chromeUserAgent(app.userAgentFallback)
 
 let shell: BrowserShell | null = null
 let db: BrowserDB | null = null
@@ -77,6 +77,7 @@ function uniquePath(dir: string, filename: string): string {
 function setupSession(partition: string, downloads: Downloads, isPrivate: boolean) {
   const ses = session.fromPartition(partition)
   ses.setUserAgent(app.userAgentFallback)
+  attachIdentityHeaders(ses)
   installPermissionHandlers(ses, partition, !isPrivate)
   ses.setSpellCheckerLanguages(['en-US'])
   // Save downloads straight to ~/Downloads, like other browsers.

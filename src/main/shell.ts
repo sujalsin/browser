@@ -55,6 +55,7 @@ import { ARC_DEFAULT_PROFILE, applyArcPlan, arcHistoryPath, countPlan, parseArcS
 import type { BrowserDB } from './db'
 import type { Downloads } from './downloads'
 import { forgetPartitionPermissions, forgetPermission } from './permissions'
+import { applyChromeIdentity } from './identity'
 import { LittleWindow } from './little'
 import { Shields } from './shields'
 import { pictureInPicture } from './pip'
@@ -469,6 +470,7 @@ export class BrowserShell {
       ...(adopt?.webContents ? { webContents: adopt.webContents } : {}),
     })
     view.setBackgroundColor('#ffffff')
+    applyChromeIdentity(view.webContents)
     this.views.set(tab.id, view)
     this.runtime[tab.id] = { loaded: true, loading: true, canGoBack: false, canGoForward: false, audible: false, muted: false, blocked: 0 }
     this.wireView(tab.id, view)
@@ -1770,6 +1772,7 @@ export class BrowserShell {
       view.setBackgroundColor('#ffffff')
       view.setBorderRadius(VIEW_RADIUS)
       const wc = view.webContents
+      applyChromeIdentity(wc)
       const sync = () => {
         if (!this.preview || wc.isDestroyed()) return
         this.preview.url = wc.getURL() || this.preview.url
@@ -1834,7 +1837,10 @@ export class BrowserShell {
           if (!pageUrl.startsWith('http') || space.private) return
           this.record((db) => (title ? db.setTitle(pageUrl, title) : db.addVisit(pageUrl, '')))
         },
-        wirePage: (wc) => attachWebContextMenu(this, wc),
+        wirePage: (wc) => {
+          attachWebContextMenu(this, wc)
+          applyChromeIdentity(wc)
+        },
       },
       url,
     )
