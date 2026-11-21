@@ -54,8 +54,18 @@ export function forgetPermission(p: Pick<SitePermission, 'partition' | 'origin' 
   }
 }
 
+/** Profiles whose answers are kept only in memory (private browsing). */
+const ephemeral = new Set<string>()
+
+/** Forget every answer for a profile (a private space was closed). */
+export function forgetPartitionPermissions(partition: string) {
+  for (const key of [...decisions.keys()]) if (key.startsWith(`${partition}|`)) decisions.delete(key)
+  ephemeral.delete(partition)
+}
+
 function remember(partition: string, origin: string, permission: string, allowed: boolean) {
   decisions.set(keyOf(partition, origin, permission), allowed)
+  if (ephemeral.has(partition)) return
   try {
     store?.setPermission({ partition, origin, permission, allowed, updated: Date.now() })
   } catch (err) {
@@ -83,7 +93,8 @@ function isExtension(url: string): boolean {
   return url.startsWith('chrome-extension://')
 }
 
-export function installPermissionHandlers(ses: Session, partition: string): void {
+export function installPermissionHandlers(ses: Session, partition: string, persist = true): void {
+  if (!persist) ephemeral.add(partition)
   ses.setPermissionRequestHandler(async (wc, permission, callback, details) => {
     const url = details.requestingUrl || wc.getURL()
     if (ALWAYS_ALLOW.has(permission) || isExtension(url)) return callback(true)

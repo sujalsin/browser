@@ -251,14 +251,18 @@ export function clearToday(s: PersistedState, spaceId: string, now: number): str
   const space = spaceById(s, spaceId)
   if (!space) return []
   const ids = todayTabIds(s, spaceId)
-  for (const id of ids) archiveTab(s, id, now)
+  // Private tabs are simply closed: the archive is saved to disk.
+  for (const id of ids) space.private ? removeTab(s, id) : archiveTab(s, id, now)
   for (const id of [...space.today]) if (folderById(s, id)) removeFolder(s, id, false)
   return ids
 }
 
-/** Today tabs (any space) not used since `cutoff`. */
+/** Today tabs (any space except private ones) not used since `cutoff`. */
 export function staleTodayTabs(s: PersistedState, cutoff: number): string[] {
-  return s.spaces.flatMap((sp) => todayTabIds(s, sp.id)).filter((id) => (tabById(s, id)?.lastActiveAt ?? Infinity) < cutoff)
+  return s.spaces
+    .filter((sp) => !sp.private)
+    .flatMap((sp) => todayTabIds(s, sp.id))
+    .filter((id) => (tabById(s, id)?.lastActiveAt ?? Infinity) < cutoff)
 }
 
 // ───────────────────────────── Tidy (rule-based, no AI) ─────────────────────────────
@@ -366,6 +370,39 @@ export function tidy(s: PersistedState, spaceId: string, keepId: string | null, 
   return result
 }
 
+// ───────────────────────────── private browsing ─────────────────────────────
+
+export function isPrivateTab(s: PersistedState, tab: Tab | undefined): boolean {
+  return !!tab && !!spaceById(s, tab.spaceId)?.private
+}
+
+/**
+ * The state as it may be written to disk: private spaces and everything in
+ * them (tabs, folders, favorites, splits, archive entries) removed. Returns a
+ * copy; the live state is not changed.
+ */
+export function persistable(s: PersistedState): PersistedState {
+  const privateSpaces = s.spaces.filter((sp) => sp.private)
+  if (!privateSpaces.length) return s
+  const spaceIds = new Set(privateSpaces.map((sp) => sp.id))
+  const partitions = new Set(privateSpaces.map((sp) => sp.partition))
+  const spaces = s.spaces.filter((sp) => !sp.private)
+  const tabs = s.tabs.filter((t) => !spaceIds.has(t.spaceId))
+  const kept = new Set(tabs.map((t) => t.id))
+  const activeSpaceId = spaceIds.has(s.activeSpaceId) ? spaces[0].id : s.activeSpaceId
+  return {
+    ...s,
+    spaces,
+    tabs,
+    folders: s.folders.filter((f) => !spaceIds.has(f.spaceId)),
+    favorites: Object.fromEntries(Object.entries(s.favorites).filter(([partition]) => !partitions.has(partition))),
+    splits: s.splits.filter((sp) => sp.tabIds.every((id) => kept.has(id))),
+    archive: s.archive.filter((a) => !spaceIds.has(a.spaceId)),
+    activeSpaceId,
+    activeTabId: s.activeTabId && kept.has(s.activeTabId) ? s.activeTabId : (spaces.find((sp) => sp.id === activeSpaceId)?.lastTabId ?? null),
+  }
+}
+
 // ───────────────────────────── loading old / damaged state ─────────────────────────────
 
 interface V1Tab extends Omit<Tab, 'kind'> {
@@ -392,6 +429,12 @@ export function migrate(raw: Record<string, unknown>): Record<string, unknown> {
  * no references to missing items. Protects against bugs and hand-edited files.
  */
 export function repair(s: PersistedState) {
+  // Private spaces are never saved; if one is somehow in the file, its session is gone anyway.
+  if (s.spaces.some((sp) => sp.private) && s.spaces.some((sp) => !sp.private)) {
+    const ids = new Set(s.spaces.filter((sp) => sp.private).map((sp) => sp.id))
+    s.spaces = s.spaces.filter((sp) => !sp.private)
+    s.tabs = s.tabs.filter((t) => !ids.has(t.spaceId))
+  }
   s.folders ??= []
   s.favorites ??= {}
   for (const sp of s.spaces) {

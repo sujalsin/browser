@@ -25,15 +25,16 @@ export function App() {
   const state = useBrowserState()
   if (!state) return null
   const hidden = !state.sidebarVisible && !state.htmlFullscreen
+  const isPrivate = !!state.spaces.find((s) => s.id === state.activeSpaceId)?.private
 
   return (
-    <div className={`window ${state.platform}`} style={themeStyle(state)}>
+    <div className={`window ${state.platform} ${isPrivate ? 'private' : ''}`} style={themeStyle(state)}>
       {state.sidebarVisible && !state.htmlFullscreen && <Sidebar state={state} />}
       {/* Sidebar hidden: hovering the left edge slides it in over the page. */}
       {hidden && <div className="edge-reveal" onMouseEnter={() => dispatch({ type: 'sidebar.peek', open: true })} />}
       <main className="content" style={{ left: state.sidebarVisible ? SIDEBAR_WIDTH : VIEW_GAP }}>
         <div className="drag-strip" />
-        {!state.activeTabId && <EmptyState />}
+        {!state.activeTabId && <EmptyState isPrivate={isPrivate} />}
         {state.activeTabId && !state.splitView && state.runtime[state.activeTabId]?.error && <LoadError error={state.runtime[state.activeTabId].error!} />}
       </main>
       {state.splitView && <SplitChrome state={state} />}
@@ -41,11 +42,17 @@ export function App() {
   )
 }
 
-function EmptyState() {
+function EmptyState({ isPrivate }: { isPrivate: boolean }) {
   return (
     <div className="empty-state">
       <div className="empty-card">
-        <h1>Nothing open</h1>
+        <h1>{isPrivate ? 'Private browsing' : 'Nothing open'}</h1>
+        {isPrivate && (
+          <p className="private-note">
+            Pages you open here aren’t added to history, and cookies and logins are discarded when you close this space. Downloads you keep stay on your
+            Mac. Extensions are off. Websites and your network can still see what you do.
+          </p>
+        )}
         <p>
           Press <kbd>⌘</kbd> <kbd>T</kbd> to open a tab.
         </p>

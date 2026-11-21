@@ -205,9 +205,18 @@ export function Sidebar({ state }: { state: UIState }) {
             <ShieldsButton state={state} />
           </div>
 
-          <div className="extensions-row">
-            <browser-action-list partition={space.partition} alignment="bottom right" />
-          </div>
+          {space.private ? (
+            <div className="private-banner" title="History isn’t saved; cookies are discarded when you close this space. Extensions are off.">
+              <Icon name="private" size={14} /> Private — nothing is saved
+              <button className="lib-button small" onClick={() => dispatch({ type: 'space.closePrivate', id: space.id })}>
+                Close
+              </button>
+            </div>
+          ) : (
+            <div className="extensions-row">
+              <browser-action-list partition={space.partition} alignment="bottom right" />
+            </div>
+          )}
 
           <div className="tab-scroll">
             <Favorites ids={favorites} />
@@ -460,7 +469,7 @@ function SpaceSwitcher({ state }: { state: UIState }) {
       {state.spaces.map((sp, i) => (
         <button
           key={sp.id}
-          className={`space-dot-btn ${sp.id === state.activeSpaceId ? 'active' : ''}`}
+          className={`space-dot-btn ${sp.id === state.activeSpaceId ? 'active' : ''} ${sp.private ? 'private' : ''}`}
           style={{ '--dot': sp.color } as CSSProperties}
           title={`${sp.name}${i < 9 ? ` (⌃${i + 1})` : ''}`}
           onClick={() => dispatch({ type: 'space.switch', id: sp.id })}
@@ -469,7 +478,7 @@ function SpaceSwitcher({ state }: { state: UIState }) {
             dispatch({ type: 'space.menu', id: sp.id })
           }}
         >
-          <span className="dot" />
+          {sp.private ? <Icon name="private" size={13} /> : <span className="dot" />}
         </button>
       ))}
     </div>

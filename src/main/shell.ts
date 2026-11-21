@@ -36,6 +36,7 @@ import {
   createFolder,
   favoritesOf,
   folderById,
+  isPrivateTab,
   kindFor,
   listArray,
   locate,
@@ -52,7 +53,7 @@ import {
 import { ARC_DEFAULT_PROFILE, applyArcPlan, arcHistoryPath, countPlan, parseArcSidebar, readArcHistory } from './arc-import'
 import type { BrowserDB } from './db'
 import type { Downloads } from './downloads'
-import { forgetPermission } from './permissions'
+import { forgetPartitionPermissions, forgetPermission } from './permissions'
 import { LittleWindow } from './little'
 import { Shields } from './shields'
 import { flushState, saveState } from './store'
@@ -119,7 +120,7 @@ export class BrowserShell {
   /** Ad/tracker blocking; set by the app once created. */
   shields: Shields | null = null
   /** Set up a new profile's session (permissions, Shields, extensions). Provided by the app. */
-  prepareSession: (partition: string) => Promise<void> = async () => {}
+  prepareSession: (partition: string, opts?: { private?: boolean }) => Promise<void> = async () => {}
   /** Space or folder name being edited inline in the sidebar. */
   private editing: UIState['editing'] = null
   /** History, downloads and permissions storage; set by the app. */
@@ -471,7 +472,8 @@ export class BrowserShell {
     // must not steal focus from the tab the user is actually on.
     this.registeringTab = true
     try {
-      getExtensions(partition).addTab(view.webContents, this.win)
+      // Like Chrome's incognito, extensions don't run in private browsing.
+      if (!isPrivateTab(this.state, tab)) getExtensions(partition).addTab(view.webContents, this.win)
     } finally {
       this.registeringTab = false
     }
@@ -481,6 +483,10 @@ export class BrowserShell {
   private wireView(id: string, view: WebContentsView) {
     const wc = view.webContents
     const rt = () => this.runtime[id]
+    /** Write to history, unless this is a private tab. */
+    const history = (fn: (db: BrowserDB) => void) => {
+      if (!isPrivateTab(this.state, this.tab(id))) this.record(fn)
+    }
     const update = (patch: Partial<Tab>) => {
       const tab = this.tab(id)
       if (!tab) return
@@ -534,7 +540,7 @@ export class BrowserShell {
       this.typedIn.delete(id)
       update({ url, favicon: undefined })
       syncNav()
-      if (isWebUrl(url) && httpResponseCode < 400) this.record((db) => db.addVisit(url, ''))
+      if (isWebUrl(url) && httpResponseCode < 400) history((db) => db.addVisit(url, ''))
       lastRecorded = stripHash(url)
     })
     let lastRecorded = ''
@@ -542,7 +548,7 @@ export class BrowserShell {
       // Single-page apps (YouTube, Gmail) change pages without reloading: record those too.
       if (!isMainFrame || !isWebUrl(url) || stripHash(url) === lastRecorded) return
       lastRecorded = stripHash(url)
-      this.record((db) => db.addVisit(url, wc.getTitle()))
+      history((db) => db.addVisit(url, wc.getTitle()))
     })
     wc.on('before-input-event', (_e, input) => {
       // Typing (not shortcuts) means there may be unsaved text: don't sleep this tab.
@@ -552,12 +558,12 @@ export class BrowserShell {
     wc.on('page-title-updated', (_e, title) => {
       update({ title: title || NEW_TAB_TITLE })
       const url = wc.getURL()
-      if (isWebUrl(url)) this.record((db) => db.setTitle(url, title))
+      if (isWebUrl(url)) history((db) => db.setTitle(url, title))
     })
     wc.on('page-favicon-updated', (_e, favicons) => {
       update({ favicon: favicons[0] })
       const url = wc.getURL()
-      if (favicons[0] && isWebUrl(url)) this.record((db) => db.setFavicon(url, favicons[0]))
+      if (favicons[0] && isWebUrl(url)) history((db) => db.setFavicon(url, favicons[0]))
     })
     // Clicking into the other pane of a split makes it the active tab.
     const focusPane = () => {
@@ -568,7 +574,7 @@ export class BrowserShell {
         tab.lastActiveAt = Date.now()
         this.state.activeTabId = id
         this.space().lastTabId = id
-        getExtensions(this.partitionOf(tab)).selectTab(wc)
+        if (!isPrivateTab(this.state, tab)) getExtensions(this.partitionOf(tab)).selectTab(wc)
         this.emit()
       }
     }
@@ -782,7 +788,7 @@ export class BrowserShell {
     const view = this.ensureView(tab)
     this.attach(id)
     if (!this.commandBar) view.webContents.focus()
-    getExtensions(this.partitionOf(tab)).selectTab(view.webContents)
+    if (!isPrivateTab(this.state, tab)) getExtensions(this.partitionOf(tab)).selectTab(view.webContents)
     this.emit()
   }
 
@@ -804,6 +810,8 @@ export class BrowserShell {
   }
 
   private rememberClosed(tab: Tab, loc: Location | null) {
+    // Private tabs leave no trace: they can't be reopened with ⇧⌘T.
+    if (spaceById(this.state, loc?.spaceId || tab.spaceId)?.private) return
     this.closed.unshift({
       url: tab.url,
       title: tab.title,
@@ -1040,7 +1048,9 @@ export class BrowserShell {
 
   deleteSpace(id: string) {
     const space = spaceById(this.state, id)
-    if (!space || this.state.spaces.length < 2) return
+    if (!space) return
+    // There must always be one normal space left.
+    if (!space.private && this.state.spaces.filter((s) => !s.private).length < 2) return
     const doomed = sidebarOrder(this.state, id).filter((tabId) => this.tab(tabId)?.kind !== 'favorite')
     for (const folderId of [...space.pinned, ...space.today]) removeFolder(this.state, folderId, true)
     for (const tabId of doomed) {
@@ -1061,12 +1071,47 @@ export class BrowserShell {
     }
     if (!heir) delete this.state.favorites[space.partition]
     if (this.state.activeSpaceId === id) this.switchSpace(this.state.spaces[0].id)
+    if (space.private) {
+      // Wipe the in-memory session now rather than at quit: cookies, cache, storage.
+      const ses = session.fromPartition(space.partition)
+      void ses.clearStorageData().catch(() => {})
+      void ses.clearCache().catch(() => {})
+      forgetPartitionPermissions(space.partition)
+    }
+    this.emit()
+  }
+
+  /** Switch to a normal space if a private one is showing (links from other apps open there). */
+  leavePrivate() {
+    if (this.space().private) this.switchSpace(this.state.spaces[0].id)
+  }
+
+  /** ⇧⌘N: go to the private space, creating it (with a fresh in-memory session) if needed. */
+  async openPrivate() {
+    let space = this.state.spaces.find((s) => s.private)
+    if (!space) {
+      const id = randomUUID()
+      const partition = `private-${id}` // no "persist:" prefix = kept in memory only
+      await this.prepareSession(partition, { private: true })
+      space = { id, name: 'Private', color: '#6b7280', partition, pinned: [], today: [], lastTabId: null, private: true }
+      this.state.spaces.push(space)
+    }
+    this.switchSpace(space.id)
+    if (!this.state.activeTabId) this.openCommandBar('new')
     this.emit()
   }
 
   showSpaceMenu(id: string) {
     const space = spaceById(this.state, id)
     if (!space) return
+    if (space.private) {
+      Menu.buildFromTemplate([
+        { label: 'History and cookies in this space aren’t saved', enabled: false },
+        { type: 'separator' },
+        { label: 'Close Private Space', click: () => this.deleteSpace(id) },
+      ]).popup({ window: this.win })
+      return
+    }
     const others = this.state.spaces.filter((s) => s.partition === space.partition).length - 1
     const ownProfile = space.partition !== this.state.spaces[0].partition
     const items: Electron.MenuItemConstructorOptions[] = [
@@ -1113,6 +1158,8 @@ export class BrowserShell {
     Menu.buildFromTemplate([
       { label: 'New Space', click: () => void this.createSpace(false) },
       { label: 'New Space with Separate Profile', sublabel: 'Own cookies, logins and extensions', click: () => void this.createSpace(true) },
+      { type: 'separator' },
+      { label: 'Private Browsing', accelerator: 'Shift+CmdOrCtrl+N', registerAccelerator: false, click: () => void this.openPrivate() },
     ]).popup({ window: this.win })
   }
 
@@ -1248,7 +1295,8 @@ export class BrowserShell {
     const loaded = this.views.has(id)
     const rt = this.runtime[id]
     const space = this.space()
-    const otherSpaces = this.state.spaces.filter((s) => s.id !== tab.spaceId)
+    // Tabs don't move into or out of private browsing.
+    const otherSpaces = isPrivateTab(this.state, tab) ? [] : this.state.spaces.filter((s) => s.id !== tab.spaceId && !s.private)
     const loc = locate(this.state, id)
     const items: Electron.MenuItemConstructorOptions[] = [
       { label: tab.kind === 'favorite' ? 'Remove from Favorites' : 'Add to Favorites', click: () => this.toggleFavorite(id) },
@@ -1359,16 +1407,18 @@ export class BrowserShell {
     const site = tab ? Shields.siteOf(tab.url) : null
     const siteOn = !!site && !s.disabledSites.includes(site)
     const blocked = tab ? (this.runtime[tab.id]?.blocked ?? 0) : 0
+    const isPrivate = isPrivateTab(this.state, tab)
 
     const updated = status?.updatedAt ? `Filter lists updated ${timeAgo(status.updatedAt)}` : 'Filter lists not downloaded yet'
     const items: Electron.MenuItemConstructorOptions[] = [
       { label: s.enabled && siteOn ? `${blocked} blocked on this page` : 'Shields are off for this page', enabled: false },
       { type: 'separator' },
       {
-        label: site ? `Shields on for ${site}` : 'Shields on for this site',
+        // Per-site choices are saved to settings, so they aren't offered in private browsing.
+        label: isPrivate ? 'Shields on (per-site switch is off in private browsing)' : site ? `Shields on for ${site}` : 'Shields on for this site',
         type: 'checkbox',
         checked: siteOn,
-        enabled: !!site && s.enabled,
+        enabled: !!site && s.enabled && !isPrivate,
         click: () => {
           if (!site) return
           const disabledSites = siteOn ? [...s.disabledSites, site] : s.disabledSites.filter((d) => d !== site)
@@ -1540,6 +1590,7 @@ export class BrowserShell {
 
   /** Zap: hide the element under the pointer on this site, for good (editable in Boosts). */
   async zapAt(wc: WebContents, x: number, y: number) {
+    if (this.isPrivatePage(wc)) return // a Boost would record the site's name
     const selector = (await wc.executeJavaScript(selectorScript(x, y)).catch(() => null)) as string | null
     const url = wc.getURL()
     const domain = Shields.siteOf(url) ?? normalizeDomain(url)
@@ -1679,8 +1730,9 @@ export class BrowserShell {
   private littles = new Set<LittleWindow>()
 
   /** ⌥⌘N, or a link from another app: a small window for a quick look. */
-  openLittle(url?: string) {
-    const space = this.space()
+  openLittle(url?: string, fromOutside = false) {
+    // Links from other apps never land in private browsing.
+    const space = fromOutside && this.space().private ? this.state.spaces[0] : this.space()
     const little = new LittleWindow(
       {
         rendererUrl: this.rendererUrl,
@@ -1694,7 +1746,7 @@ export class BrowserShell {
           this.win.focus()
         },
         onVisit: (pageUrl, title) => {
-          if (!pageUrl.startsWith('http')) return
+          if (!pageUrl.startsWith('http') || space.private) return
           this.record((db) => (title ? db.setTitle(pageUrl, title) : db.addVisit(pageUrl, '')))
         },
         wirePage: (wc) => attachWebContextMenu(this, wc),
@@ -1725,6 +1777,12 @@ export class BrowserShell {
       case 'little.toMain':
         return little.toMain()
     }
+  }
+
+  /** Is this page part of private browsing? */
+  isPrivatePage(wc: WebContents): boolean {
+    const partition = this.partitionForWebContents(wc)
+    return this.state.spaces.some((s) => s.private && s.partition === partition)
   }
 
   /** The profile a page runs in: its tab's, Peek's, or the current space's. */
@@ -2077,6 +2135,11 @@ export class BrowserShell {
         return this.cycleSpace(action.delta === -1 ? -1 : 1)
       case 'space.addMenu':
         return this.showAddSpaceMenu()
+      case 'space.private':
+        return void this.openPrivate()
+      case 'space.closePrivate':
+        if (spaceById(this.state, action.id)?.private) this.deleteSpace(action.id)
+        return
       case 'space.menu':
         return this.showSpaceMenu(action.id)
       case 'space.rename':

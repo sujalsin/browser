@@ -32,9 +32,10 @@ function openExternalUrl(url: string) {
   }
   // Like Arc: links from other apps open in a Little Arc window (setting).
   if (shell.settings.littleArcForLinks) {
-    shell.openLittle(url)
+    shell.openLittle(url, true)
     return
   }
+  shell.leavePrivate()
   shell.openTab(url)
   if (shell.win.isMinimized()) shell.win.restore()
   shell.win.focus()
@@ -73,16 +74,16 @@ function uniquePath(dir: string, filename: string): string {
   return candidate
 }
 
-function setupSession(partition: string, downloads: Downloads) {
+function setupSession(partition: string, downloads: Downloads, isPrivate: boolean) {
   const ses = session.fromPartition(partition)
   ses.setUserAgent(app.userAgentFallback)
-  installPermissionHandlers(ses, partition)
+  installPermissionHandlers(ses, partition, !isPrivate)
   ses.setSpellCheckerLanguages(['en-US'])
   // Save downloads straight to ~/Downloads, like other browsers.
   ses.on('will-download', (_e, item) => {
     const path = uniquePath(app.getPath('downloads'), item.getFilename())
     item.setSavePath(path)
-    downloads.track(item, path)
+    downloads.track(item, path, isPrivate)
     item.once('done', () => reservedPaths.delete(path))
   })
 }
@@ -144,18 +145,19 @@ async function start() {
 
   // One-time setup per profile (session partition); several spaces can share one.
   const prepared = new Map<string, Promise<void>>()
-  const prepareSession = (partition: string): Promise<void> => {
+  const prepareSession = (partition: string, opts: { private?: boolean } = {}): Promise<void> => {
     let ready = prepared.get(partition)
     if (!ready) {
-      setupSession(partition, downloads)
+      setupSession(partition, downloads, !!opts.private)
       applyH264(partition, (shell?.settings ?? state.settings).preferH264)
       shields.attach(session.fromPartition(partition))
-      ready = setupExtensions(partition).catch((err) => console.error('Extension setup failed:', err))
+      // Private browsing runs without extensions, like Chrome's incognito.
+      ready = opts.private ? Promise.resolve() : setupExtensions(partition).catch((err) => console.error('Extension setup failed:', err))
       prepared.set(partition, ready)
     }
     return ready
   }
-  const startupSessions = [...new Set(state.spaces.map((sp) => sp.partition))].map(prepareSession)
+  const startupSessions = [...new Set(state.spaces.map((sp) => sp.partition))].map((p) => prepareSession(p))
 
   ipcMain.handle(IPC.getState, (event) => {
     if (!shell || !shell.isUIWebContents(event.sender)) return null

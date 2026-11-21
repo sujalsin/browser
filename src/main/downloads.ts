@@ -12,6 +12,7 @@ export type DownloadOp = 'pause' | 'resume' | 'cancel' | 'open' | 'show' | 'remo
 /** Tracks downloads from every profile, keeps the recent list, persists it. */
 export class Downloads {
   private live = new Map<string, DownloadItem>()
+  private ephemeral = new Set<string>()
   private list: DownloadInfo[]
   /** Something changed (progress, new, done): refresh the UI. */
   onChange: () => void = () => {}
@@ -28,7 +29,8 @@ export class Downloads {
     return this.list
   }
 
-  track(item: DownloadItem, savePath: string) {
+  /** `ephemeral`: from private browsing — listed until quit, never written to the database. */
+  track(item: DownloadItem, savePath: string, ephemeral = false) {
     const info: DownloadInfo = {
       id: randomUUID(),
       url: item.getURL(),
@@ -40,6 +42,7 @@ export class Downloads {
       total: item.getTotalBytes(),
       startedAt: Date.now(),
     }
+    if (ephemeral) this.ephemeral.add(info.id)
     this.live.set(info.id, item)
     this.list.unshift(info)
     this.list.length = Math.min(this.list.length, KEEP)
@@ -113,6 +116,7 @@ export class Downloads {
   }
 
   private save(info: DownloadInfo) {
+    if (this.ephemeral.has(info.id)) return
     safe(() => this.db?.saveDownload(info))
   }
 }

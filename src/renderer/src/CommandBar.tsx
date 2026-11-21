@@ -49,8 +49,10 @@ function buildResults(state: UIState, input: string, history: HistoryItem[]): Re
 
   // Tabs from every space; the current space ranks first on ties.
   const here = (t: Tab) => (t.spaceId === state.activeSpaceId || t.kind === 'favorite' ? 1 : 0)
+  // Private tabs only show up in search while you are in the private space.
+  const privateSpaces = new Set(state.spaces.filter((s) => s.private).map((s) => s.id))
   const tabs = state.tabs
-    .filter((t) => t.id !== state.activeTabId)
+    .filter((t) => t.id !== state.activeTabId && (t.spaceId === state.activeSpaceId || !privateSpaces.has(t.spaceId)))
     .map((tab) => ({ tab, s: score(query, tab.title, tab.url) }))
     .filter((x) => x.s > 0)
     .sort((a, b) => b.s - a.s || here(b.tab) - here(a.tab) || b.tab.lastActiveAt - a.tab.lastActiveAt)

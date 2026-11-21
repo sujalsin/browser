@@ -3,7 +3,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { PersistedState } from '../shared/types'
-import { MAX_ARCHIVE, migrate, repair } from './model'
+import { MAX_ARCHIVE, migrate, persistable, repair } from './model'
 
 
 function filePath(): string {
@@ -80,7 +80,9 @@ let pending: PersistedState | null = null
 let writing: Promise<void> | null = null
 
 function serialize(state: PersistedState): string {
-  return JSON.stringify({ ...state, archive: state.archive.slice(0, MAX_ARCHIVE) })
+  // Private browsing never touches the disk.
+  const safe = persistable(state)
+  return JSON.stringify({ ...safe, archive: safe.archive.slice(0, MAX_ARCHIVE) })
 }
 
 /** Debounced, atomic (write temp file then rename) save, off the main thread's critical path. */

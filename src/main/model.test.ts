@@ -7,6 +7,7 @@ import {
   locate,
   migrate,
   moveItem,
+  persistable,
   removeFolder,
   removeTab,
   repair,
@@ -197,6 +198,53 @@ describe('Tidy', () => {
     const second = JSON.stringify(s.spaces[0].today.map((id) => s.folders.find((f) => f.id === id)?.name ?? id))
     expect(second).toBe(first)
     expect(s.folders.find((f) => f.id === 'MINE')!.children).toEqual(['m1', 'm2'])
+  })
+})
+
+describe('private browsing', () => {
+  function withPrivate() {
+    const s = state()
+    s.spaces.push({ id: 'P', name: 'Private', color: '#333', partition: 'private-1', pinned: [], today: [], lastTabId: null, private: true })
+    addTab(s, tab('normal', 'https://normal.com/'), 'A', { type: 'today' }, 0)
+    addTab(s, tab('secret', 'https://secret.com/'), 'P', { type: 'today' }, 0)
+    addTab(s, tab('secret2', 'https://secret2.com/'), 'P', { type: 'today' }, 0)
+    addTab(s, tab('secretFav', 'https://fav-secret.com/'), 'P', { type: 'favorites' }, 0)
+    createFolder(s, 'P', { type: 'pinned' }, 0, 'Secret folder', 'PF')
+    s.splits.push({ id: 'sp1', tabIds: ['secret', 'secret2'], ratio: 0.5 })
+    s.spaces[0].lastTabId = 'normal'
+    return s
+  }
+
+  it('nothing private is in what gets saved', () => {
+    const s = withPrivate()
+    s.activeSpaceId = 'P'
+    s.activeTabId = 'secret'
+    const saved = JSON.stringify(persistable(s))
+    expect(saved).not.toContain('secret')
+    expect(saved).not.toContain('private-1')
+    expect(saved).not.toContain('Secret folder')
+    const p = persistable(s)
+    expect(p.spaces.map((sp) => sp.id)).toEqual(['A', 'B', 'C'])
+    expect(p.tabs.map((t) => t.id)).toEqual(['normal'])
+    expect(p).toMatchObject({ activeSpaceId: 'A', activeTabId: 'normal', splits: [] })
+  })
+
+  it('saving does not change the live state', () => {
+    const s = withPrivate()
+    persistable(s)
+    expect(s.spaces).toHaveLength(4)
+    expect(tabById(s, 'secret')).toBeDefined()
+  })
+
+  it('Clear in a private space closes tabs without archiving them', () => {
+    const s = withPrivate()
+    expect(clearToday(s, 'P', 1).sort()).toEqual(['secret', 'secret2'])
+    expect(s.archive).toEqual([])
+  })
+
+  it('private tabs are never auto-archived', () => {
+    const s = withPrivate()
+    expect(staleTodayTabs(s, Number.MAX_SAFE_INTEGER)).toEqual(['normal'])
   })
 })
 

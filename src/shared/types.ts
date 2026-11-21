@@ -15,6 +15,11 @@ export interface Space {
   lastTabId: string | null
   /** Optional second color: the sidebar becomes a gradient from `color` to this. */
   gradient?: string
+  /**
+   * Private browsing: an in-memory session (cookies vanish when it closes),
+   * no history, and nothing about it is ever written to disk.
+   */
+  private?: boolean
 }
 
 /** Two tabs shown side by side. */
@@ -289,6 +294,8 @@ export type Action =
   | { type: 'space.switch'; id: string }
   | { type: 'space.cycle'; delta: 1 | -1 }
   | { type: 'space.addMenu' }
+  | { type: 'space.private' }
+  | { type: 'space.closePrivate'; id: string }
   | { type: 'space.menu'; id: string }
   | { type: 'space.rename'; id: string; name: string }
   | { type: 'folder.toggle'; id: string }
