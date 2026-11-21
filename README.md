@@ -143,9 +143,9 @@ over the page, like Arc.
 ## Netflix, Spotify and other protected video
 
 This browser uses a build of Electron that includes Widevine, the copy-protection module those
-services require. Spotify and many others work out of the box. Netflix, Disney+ and a few more
-also insist that the app itself is signed for Widevine, which is free but needs a one-time setup
-on each Mac you build on:
+services require. Services such as Netflix and Disney+ also insist that the app itself is signed
+for Widevine. That is free, but needs a one-time setup on each Mac you build on, so do this
+before expecting protected video to play:
 
 ```bash
 brew install pipx && pipx install castlabs-evs
@@ -157,7 +157,7 @@ evs-account signup
 
 `signup` asks for an email and a password and sends a confirmation code. After that, every
 `npm run dist:mac…` signs the app automatically (you'll see it in the build output). Without it the
-build still works and prints a warning; only those few services won't play. Protected video does
+build still works and prints a warning, but expect protected video not to play. Protected video does
 not play in `npm run dev`.
 
 Settings shows at the bottom whether protected video is ready. The first launch downloads the
