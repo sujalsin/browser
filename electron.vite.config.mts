@@ -37,6 +37,7 @@ export default defineConfig({
         input: {
           index: resolve('src/preload/index.ts'),
           h264: resolve('src/preload/h264.ts'),
+          shields: resolve('src/preload/shields.ts'),
         },
       },
     },

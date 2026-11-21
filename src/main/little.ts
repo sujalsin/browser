@@ -2,6 +2,7 @@ import { BrowserWindow, WebContentsView, nativeTheme, type WebContents } from 'e
 import { join } from 'node:path'
 import { IPC, type LittleState, type SearchEngineId } from '../shared/types'
 import { resolveInput } from '../shared/url'
+import { pagePreferences } from './page-prefs'
 
 const TOOLBAR = 44
 const GAP = 6
@@ -44,7 +45,7 @@ export class LittleWindow {
       backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1b22' : '#e9e7f2',
       webPreferences: { preload: join(__dirname, '../preload/index.js'), sandbox: true, contextIsolation: true, nodeIntegration: false },
     })
-    this.view = new WebContentsView({ webPreferences: { partition: opts.partition, sandbox: true, contextIsolation: true, nodeIntegration: false } })
+    this.view = new WebContentsView({ webPreferences: pagePreferences(opts.partition) })
     this.view.setBackgroundColor('#ffffff')
     this.view.setBorderRadius(8)
     this.win.contentView.addChildView(this.view)

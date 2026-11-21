@@ -1,11 +1,11 @@
 import { ElectronBlocker } from '@ghostery/adblocker-electron'
-import { app, ipcMain, net, type IpcMainInvokeEvent, type Session } from 'electron'
+import { app, ipcMain, net, type IpcMainEvent, type IpcMainInvokeEvent, type Session } from 'electron'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { getDomain, parse } from 'tldts-experimental'
 import { isHttpsFailure, isUpgradeable, stripTrackingParams, toHttp, toHttps } from '../shared/privacy'
-import { isolateScriptlets } from '../shared/scriptlets'
+import { SCRIPTLETS_CHANNEL, isolateScriptlets } from '../shared/scriptlets'
 import type { ShieldsSettings, ShieldsStatus } from '../shared/types'
 import createWorker from './shields-worker?nodeWorker'
 
@@ -81,6 +81,10 @@ export class Shields {
       // and decide by the document's own address rather than the tab's.
       if (!this.engine || !/^https?:/.test(url) || !this.activeFor(url)) return
       this.injectCosmetics(this.engine, event, url, msg)
+    })
+    // Asked synchronously by our own script in each frame, before the page's scripts run.
+    ipcMain.on(SCRIPTLETS_CHANNEL, (event, url: string) => {
+      event.returnValue = this.scriptletsFor(event, url)
     })
     ipcMain.handle(MUTATION_CHANNEL, (event) => (this.engine ? this.engine.onIsMutationObserverEnabled(event) : false))
   }
@@ -174,19 +178,13 @@ export class Shields {
   // ───────────────────────────── in-page blocking ─────────────────────────────
 
   /**
-   * Hide ad elements (CSS) and run the page's scriptlets. Asked for by the
-   * in-page script: once as the page starts, then again as its DOM grows.
-   *
-   * This replaces the engine's own `onInjectCosmeticFilters`, which runs the
-   * scriptlets one by one in the page's global scope (see isolateScriptlets for
-   * how that breaks pages), only once the page has finished loading (too late
-   * for a scriptlet meant to get in before the site's code), and while
-   * pretending the user just clicked.
+   * Hide ad elements (CSS). Asked for by the engine's in-page script: once as
+   * the page starts, then again as its DOM grows.
    */
   private injectCosmetics(engine: ElectronBlocker, event: IpcMainInvokeEvent, url: string, msg?: DomFeatures) {
     const { hostname, domain } = parse(url)
     const firstRun = msg === undefined
-    const { active, styles, scripts } = engine.getCosmeticsFilters({
+    const { active, styles } = engine.getCosmeticsFilters({
       domain: domain ?? '',
       hostname: hostname ?? '',
       url,
@@ -194,16 +192,43 @@ export class Shields {
       hrefs: msg?.hrefs,
       ids: msg?.ids,
       getBaseRules: firstRun,
-      getInjectionRules: firstRun,
+      getInjectionRules: false, // scriptlets go in earlier, see scriptletsFor
       getExtendedRules: false,
       getRulesFromHostname: firstRun,
       getRulesFromDOM: !firstRun,
       callerContext: { frameId: event.frameId, processId: event.processId, lifecycle: msg?.lifecycle },
     })
-    if (!active) return
-    if (styles.length > 0) void event.sender.insertCSS(styles, { cssOrigin: 'user' }).catch(() => {})
-    // Straight into the frame that asked: webContents.executeJavaScript would wait for the page to finish loading.
-    if (scripts.length > 0) void event.senderFrame?.executeJavaScript(isolateScriptlets(scripts)).catch(() => {})
+    if (active && styles.length > 0) void event.sender.insertCSS(styles, { cssOrigin: 'user' }).catch(() => {})
+  }
+
+  /**
+   * The scriptlets for a page or frame at `url`, as one script ('' for none).
+   *
+   * The engine's own way of delivering them (`onInjectCosmeticFilters`) isn't
+   * used: it runs them only after the page has finished loading, which is too
+   * late for most of them, in the page's global scope, where they break each
+   * other (see isolateScriptlets), and while pretending the user just clicked.
+   */
+  private scriptletsFor(event: IpcMainEvent, url: string): string {
+    const engine = this.engine
+    if (!engine || !/^https?:/.test(url)) return ''
+    // A frame inside a page follows that page's setting. The page itself goes by
+    // its own address: the tab's is still the previous one at this moment.
+    const frame = event.senderFrame
+    const pageUrl = frame && frame.parent ? event.sender.getURL() || url : url
+    if (!this.activeFor(pageUrl)) return ''
+    const { hostname, domain } = parse(url)
+    const { active, scripts } = engine.getCosmeticsFilters({
+      domain: domain ?? '',
+      hostname: hostname ?? '',
+      url,
+      getBaseRules: false,
+      getInjectionRules: true,
+      getExtendedRules: false,
+      getRulesFromHostname: true,
+      getRulesFromDOM: false,
+    })
+    return active && scripts.length > 0 ? isolateScriptlets(scripts) : ''
   }
 
   // ───────────────────────────── per-site state ─────────────────────────────
@@ -281,6 +306,7 @@ export class Shields {
     if (this.sessions.has(ses)) return
     this.sessions.add(ses)
     ses.registerPreloadScript({ id: 'shields-cosmetics', type: 'frame', filePath: this.preloadPath })
+    ses.registerPreloadScript({ id: 'shields-scriptlets', type: 'frame', filePath: join(__dirname, '../preload/shields.js') })
 
     ses.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, callback) => {
       if (details.resourceType === 'mainFrame') return callback(this.topLevel(details))

@@ -56,6 +56,7 @@ import type { BrowserDB } from './db'
 import type { Downloads } from './downloads'
 import { forgetPartitionPermissions, forgetPermission } from './permissions'
 import { applyChromeIdentity } from './identity'
+import { pagePreferences } from './page-prefs'
 import { LittleWindow } from './little'
 import { Shields } from './shields'
 import { pictureInPicture } from './pip'
@@ -460,13 +461,7 @@ export class BrowserShell {
   private createView(tab: Tab, adopt?: { webContents?: WebContents; webPreferences?: Electron.WebPreferences }): WebContentsView {
     const partition = this.partitionOf(tab)
     const view = new WebContentsView({
-      webPreferences: {
-        ...adopt?.webPreferences,
-        partition,
-        sandbox: true,
-        contextIsolation: true,
-        nodeIntegration: false,
-      },
+      webPreferences: { ...adopt?.webPreferences, ...pagePreferences(partition) },
       ...(adopt?.webContents ? { webContents: adopt.webContents } : {}),
     })
     view.setBackgroundColor('#ffffff')
@@ -645,7 +640,7 @@ export class BrowserShell {
           overrideBrowserWindowOptions: {
             width: 520,
             height: 680,
-            webPreferences: { partition: this.partitionOf(this.tab(id)!), sandbox: true, contextIsolation: true },
+            webPreferences: pagePreferences(this.partitionOf(this.tab(id)!)),
           },
         }
       }
@@ -1768,7 +1763,7 @@ export class BrowserShell {
     this.closeFind()
     if (this.previewView && this.previewPartition !== partition) this.destroyPreview()
     if (!this.previewView) {
-      const view = new WebContentsView({ webPreferences: { partition, sandbox: true, contextIsolation: true, nodeIntegration: false } })
+      const view = new WebContentsView({ webPreferences: pagePreferences(partition) })
       view.setBackgroundColor('#ffffff')
       view.setBorderRadius(VIEW_RADIUS)
       const wc = view.webContents

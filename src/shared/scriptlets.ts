@@ -2,6 +2,9 @@
 // rules): they stop an ad script from starting, remove ad data from a response,
 // and so on. The filter engine hands them over as separate pieces of code.
 
+/** A page asks (and waits) for its scriptlets as it starts. Answer: one script, or ''. */
+export const SCRIPTLETS_CHANNEL = 'shields:scriptlets'
+
 /**
  * Combine a page's scriptlets into one script, each in a scope of its own.
  *
