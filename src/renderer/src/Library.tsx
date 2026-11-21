@@ -291,8 +291,6 @@ const PERMISSION_NAMES: Record<string, string> = {
   midi: 'MIDI devices',
   midiSysex: 'MIDI devices',
   'idle-detection': 'Idle detection',
-  'storage-access': 'Cross-site cookies',
-  'top-level-storage-access': 'Cross-site cookies',
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {

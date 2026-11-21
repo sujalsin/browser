@@ -13,6 +13,12 @@ const ALWAYS_ALLOW = new Set([
   'keyboardLock',
   'speaker-selection',
   'window-management',
+  // Embedded widgets (reCAPTCHA, sign-in buttons, video players) ask for their
+  // own cookies. This browser doesn't block third-party cookies, so they
+  // already have that access and a prompt would change nothing; Chrome doesn't
+  // ask in that case either. Revisit if third-party cookie blocking is added.
+  'storage-access',
+  'top-level-storage-access',
 ])
 
 const ASK: Record<string, string> = {
@@ -24,8 +30,6 @@ const ASK: Record<string, string> = {
   midi: 'use MIDI devices',
   midiSysex: 'use MIDI devices',
   'idle-detection': 'know when you are idle',
-  'storage-access': 'use cookies across sites',
-  'top-level-storage-access': 'use cookies across sites',
 }
 
 /** Remembered decisions: "partition|origin|permission" → allowed. */
@@ -38,7 +42,11 @@ const keyOf = (partition: string, origin: string, permission: string) => `${part
 export function loadPermissions(db: BrowserDB | null) {
   store = db
   try {
-    for (const p of db?.listPermissions() ?? []) decisions.set(keyOf(p.partition, p.origin, p.permission), p.allowed)
+    for (const p of db?.listPermissions() ?? []) {
+      // Answers saved for permissions that are no longer asked about are dropped.
+      if (ALWAYS_ALLOW.has(p.permission)) db?.deletePermission(p.partition, p.origin, p.permission)
+      else decisions.set(keyOf(p.partition, p.origin, p.permission), p.allowed)
+    }
   } catch (err) {
     console.error('Could not load site permissions:', err)
   }
