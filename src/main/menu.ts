@@ -1,4 +1,5 @@
 import { Menu, type MenuItemConstructorOptions } from 'electron'
+import { languageName } from '../shared/translate'
 import type { BrowserShell } from './shell'
 
 /**
@@ -167,6 +168,13 @@ export function installMenu(getShell: () => BrowserShell | null): void {
         { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: active((wc) => wc.setZoomLevel(0)) },
         { type: 'separator' },
         { role: 'togglefullscreen' },
+        { type: 'separator' },
+        {
+          label: `Translate Page to ${languageName(settings?.translateTo ?? 'en')}`,
+          accelerator: 'Alt+CmdOrCtrl+T',
+          click: withShell((s) => void s.translateActive()),
+        },
+        { label: 'Show Original', click: withShell((s) => void s.showOriginal()) },
         { type: 'separator' },
         { label: 'View Page Source', accelerator: 'Alt+CmdOrCtrl+U', click: withShell((s) => s.viewSource()) },
         { label: 'Developer Tools', accelerator: 'Alt+CmdOrCtrl+I', click: active((wc) => wc.toggleDevTools()) },

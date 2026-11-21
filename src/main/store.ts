@@ -2,6 +2,7 @@ import { app } from 'electron'
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { targetFromLocale } from '../shared/translate'
 import type { PersistedState } from '../shared/types'
 import { MAX_ARCHIVE, migrate, persistable, repair } from './model'
 
@@ -34,6 +35,8 @@ function defaultState(): PersistedState {
       appearance: 'system',
       peekFromPinned: true,
       littleArcForLinks: true,
+      translateTo: targetFromLocale(app.getLocale() || 'en'),
+      autoPip: true,
     },
     shields: {
       enabled: true,

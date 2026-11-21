@@ -78,7 +78,7 @@ function emptyState(): PersistedState {
     archive: [],
     sidebarVisible: true,
     searchEngine: 'google',
-    settings: { sleepAfterMinutes: 15, preferH264: false, archiveAfterHours: 12, appearance: 'system', peekFromPinned: true, littleArcForLinks: true },
+    settings: { sleepAfterMinutes: 15, preferH264: false, archiveAfterHours: 12, appearance: 'system', peekFromPinned: true, littleArcForLinks: true, translateTo: 'en', autoPip: true },
     shields: { enabled: true, disabledSites: [], blockCookieBanners: true, upgradeHttps: true, stripTrackingParams: true },
   }
 }

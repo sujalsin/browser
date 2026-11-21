@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { normalizeDomain } from '../../shared/boosts'
 import { SPACE_COLORS } from '../../shared/constants'
+import { LANGUAGES } from '../../shared/translate'
 import type { AppInfo, Boost, DownloadInfo, HistoryItem, LibraryTab, SearchEngineId, SitePermission, TaskInfo, UIState } from '../../shared/types'
 import { SEARCH_ENGINES, displayHost } from '../../shared/url'
 import { Favicon } from './Favicon'
@@ -353,6 +354,15 @@ function SettingsView({ state }: { state: UIState }) {
               {Object.entries(SEARCH_ENGINES).map(([id, e]) => (
                 <option key={id} value={id}>
                   {e.name}
+                </option>
+              ))}
+            </select>
+          </Row>
+          <Row label="Translate pages to" hint="View → Translate Page (⌥⌘T). The page’s text is sent to Google Translate only when you ask.">
+            <select className="lib-select" value={s.translateTo} onChange={(e) => dispatch({ type: 'settings.update', patch: { translateTo: e.target.value } })}>
+              {Object.entries(LANGUAGES).map(([code, name]) => (
+                <option key={code} value={code}>
+                  {name}
                 </option>
               ))}
             </select>

@@ -26,6 +26,7 @@ import type {
 import { IPC } from '../shared/types'
 import { SEARCH_ENGINES, displayHost, resolveInput } from '../shared/url'
 import { boostsFor, hideRule, normalizeDomain, selectorScript, wrapBoostScript } from '../shared/boosts'
+import { LANGUAGES, googleTranslatePageUrl, languageName } from '../shared/translate'
 import { attachWebContextMenu } from './context-menu'
 import { getExtensions, setExtensionsShell } from './extensions'
 import {
@@ -57,6 +58,7 @@ import { forgetPartitionPermissions, forgetPermission } from './permissions'
 import { LittleWindow } from './little'
 import { Shields } from './shields'
 import { showSiteInfo } from './site-info'
+import { restorePage, translatePage } from './translate'
 import { flushState, saveState } from './store'
 
 const MAX_CLOSED = 25
@@ -539,6 +541,7 @@ export class BrowserShell {
     })
     wc.on('did-navigate', (_e, url, httpResponseCode) => {
       this.typedIn.delete(id)
+      if (rt()) rt().translated = undefined // a new page starts untranslated
       update({ url, favicon: undefined })
       syncNav()
       if (isWebUrl(url) && httpResponseCode < 400) history((db) => db.addVisit(url, ''))
@@ -1491,6 +1494,55 @@ export class BrowserShell {
 
   // ───────────────────────────── page tools ─────────────────────────────
 
+  /** Translate the current page in place. Running it again translates content added since. */
+  async translateActive() {
+    const tab = this.activeTab()
+    const wc = this.activeWebContents()
+    const rt = tab && this.runtime[tab.id]
+    if (!tab || !wc || !rt || rt.translating) return
+    const to = this.state.settings.translateTo
+    rt.translating = true
+    this.emit(false)
+    const result = await translatePage(wc, to).catch((err) => ({ ok: false as const, reason: 'failed' as const, detail: String(err) }))
+    rt.translating = false
+    if (result.ok) {
+      rt.translated = languageName(to)
+    } else if (result.reason === 'nothing' && rt.translated) {
+      // Already translated and nothing new on the page.
+    } else if (result.reason === 'same-language') {
+      void dialog.showMessageBox(this.win, { type: 'info', message: `This page is already in ${languageName(to)}.` })
+    } else if (result.reason === 'nothing') {
+      void dialog.showMessageBox(this.win, { type: 'info', message: 'There’s no text to translate on this page.' })
+    } else {
+      const { response } = await dialog.showMessageBox(this.win, {
+        type: 'warning',
+        buttons: ['Open in Google Translate', 'Cancel'],
+        defaultId: 0,
+        cancelId: 1,
+        message: 'This page couldn’t be translated here',
+        detail: `${result.detail ?? 'The translation service did not respond.'}\n\nGoogle Translate can open a translated copy of the page in a new tab (it doesn’t work for pages you have to be signed in to see).`,
+      })
+      if (response === 0) this.openTab(googleTranslatePageUrl(tab.url, to), { afterTabId: tab.id })
+    }
+    this.emit(false)
+  }
+
+  async showOriginal() {
+    const tab = this.activeTab()
+    const wc = this.activeWebContents()
+    if (!tab || !wc) return
+    await restorePage(wc)
+    const rt = this.runtime[tab.id]
+    if (rt) rt.translated = undefined
+    this.emit(false)
+  }
+
+  /** Is this page currently showing a translation? (for the page's right-click menu) */
+  isTranslated(wc: WebContents): boolean {
+    const id = this.tabIdForWebContents(wc)
+    return !!(id && this.runtime[id]?.translated)
+  }
+
   print() {
     this.activeWebContents()?.print({}, () => {})
   }
@@ -1941,6 +1993,8 @@ export class BrowserShell {
     if (typeof patch.peekFromPinned === 'boolean') clean.peekFromPinned = patch.peekFromPinned
     if (typeof patch.littleArcForLinks === 'boolean') clean.littleArcForLinks = patch.littleArcForLinks
     if (patch.appearance === 'system' || patch.appearance === 'light' || patch.appearance === 'dark') clean.appearance = patch.appearance
+    if (typeof patch.translateTo === 'string' && patch.translateTo in LANGUAGES) clean.translateTo = patch.translateTo
+    if (typeof patch.autoPip === 'boolean') clean.autoPip = patch.autoPip
     if (Object.keys(clean).length) this.updateSettings(clean)
   }
 
@@ -2122,6 +2176,10 @@ export class BrowserShell {
         return this.sleepTab(action.id)
       case 'shields.menu':
         return this.showShieldsMenu()
+      case 'page.translate':
+        return void this.translateActive()
+      case 'page.showOriginal':
+        return void this.showOriginal()
       case 'site.info': {
         const tab = this.activeTab()
         if (!tab) return

@@ -201,6 +201,10 @@ export interface Settings {
   peekFromPinned: boolean
   /** Links from other apps open in a Little Arc window instead of a tab. */
   littleArcForLinks: boolean
+  /** Language code pages are translated into. */
+  translateTo: string
+  /** Playing video pops out into picture-in-picture when you switch to another tab. */
+  autoPip: boolean
 }
 
 /** What the UI receives. */
@@ -355,6 +359,9 @@ export type Action =
   | { type: 'tab.sleep'; id: string }
   | { type: 'shields.menu' }
   | { type: 'site.info' }
+  | { type: 'page.translate' }
+  | { type: 'page.showOriginal' }
+  | { type: 'page.pip' }
   | { type: 'tabs.clearToday' }
   | { type: 'archive.restore'; index: number }
 

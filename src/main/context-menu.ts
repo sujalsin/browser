@@ -1,3 +1,4 @@
+import { languageName } from '../shared/translate'
 import { Menu, clipboard, type MenuItemConstructorOptions, type WebContents } from 'electron'
 import { ElectronChromeExtensions } from 'electron-chrome-extensions'
 import type { BrowserShell } from './shell'
@@ -69,6 +70,14 @@ export function attachWebContextMenu(shell: BrowserShell, wc: WebContents): void
         { label: 'Reload', click: () => wc.reload() },
         { type: 'separator' },
       )
+      if (shell.tabIdForWebContents(wc) === shell.activeTab()?.id && /^https?:/.test(wc.getURL())) {
+        items.push(
+          shell.isTranslated(wc)
+            ? { label: 'Show Original', click: () => void shell.showOriginal() }
+            : { label: `Translate to ${languageName(shell.settings.translateTo)}`, click: () => void shell.translateActive() },
+          { type: 'separator' },
+        )
+      }
     }
 
     const extItems = ElectronChromeExtensions.fromSession(wc.session)?.getContextMenuItems(wc, params) ?? []
