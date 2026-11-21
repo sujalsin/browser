@@ -4,6 +4,9 @@
 import { getDomain } from 'tldts-experimental'
 import type { ArchivedTab, Folder, ListRef, PersistedState, Space, Tab, TabKind } from '../shared/types'
 
+/** Archived tabs kept (in memory and on disk). */
+export const MAX_ARCHIVE = 500
+
 export interface Location {
   spaceId: string
   ref: ListRef
@@ -117,7 +120,7 @@ function insertAt(s: PersistedState, id: string, spaceId: string, ref: ListRef, 
 }
 
 /** Can `id` go into `ref`? Folders only live in pinned/today (no nesting, no favorites). */
-export function canMove(s: PersistedState, id: string, ref: ListRef): boolean {
+function canMove(s: PersistedState, id: string, ref: ListRef): boolean {
   if (folderById(s, id)) return ref.type === 'pinned' || ref.type === 'today'
   if (!tabById(s, id)) return false
   return ref.type !== 'folder' || !!folderById(s, ref.id)
@@ -153,7 +156,7 @@ export function removeTab(s: PersistedState, id: string): Location | null {
 }
 
 /** Tidy's folders disappear when their last tab leaves; your own folders stay. */
-export function removeEmptyAutoFolders(s: PersistedState) {
+function removeEmptyAutoFolders(s: PersistedState) {
   for (const f of s.folders.filter((f) => f.auto && f.children.length === 0)) {
     detach(s, f.id)
     s.folders = s.folders.filter((x) => x !== f)
@@ -227,7 +230,7 @@ export function sidebarOrder(s: PersistedState, spaceId: string, includeCollapse
   ]
 }
 
-export function todayTabIds(s: PersistedState, spaceId: string): string[] {
+function todayTabIds(s: PersistedState, spaceId: string): string[] {
   const space = spaceById(s, spaceId)
   return space ? flatten(s, space.today, true) : []
 }
@@ -239,6 +242,7 @@ export function archiveTab(s: PersistedState, id: string, now: number) {
   if (!tab) return
   const entry: ArchivedTab = { url: tab.url, title: tab.title, favicon: tab.favicon, spaceId: tab.spaceId, archivedAt: now }
   s.archive.unshift(entry)
+  if (s.archive.length > MAX_ARCHIVE) s.archive.length = MAX_ARCHIVE
   removeTab(s, id)
 }
 

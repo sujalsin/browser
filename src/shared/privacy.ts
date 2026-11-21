@@ -5,7 +5,7 @@
  * navigations. Follows Brave's list, which is chosen not to break sites; it
  * deliberately keeps utm_* (first-party analytics, sometimes required).
  */
-export const TRACKING_PARAMS = new Set([
+const TRACKING_PARAMS = new Set([
   '__hsfp',
   '__hssc',
   '__hstc',

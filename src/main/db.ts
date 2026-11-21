@@ -173,27 +173,32 @@ export class BrowserDB {
 
   /** Delete visits at or after `since` (0 = all history). */
   deleteSince(since: number) {
-    this.tx(() => {
-      this.db.prepare('DELETE FROM visits WHERE time >= ?').run(since)
-      this.recount()
-    })
+    this.deleteVisits('time >= ?', since)
   }
 
   /** Drop visits older than `cutoff` (history retention). */
   prune(cutoff: number) {
-    this.tx(() => {
-      this.db.prepare('DELETE FROM visits WHERE time < ?').run(cutoff)
-      this.recount()
-    })
+    this.deleteVisits('time < ?', cutoff)
   }
 
-  private recount() {
-    this.db.exec(`
-      DELETE FROM urls WHERE id NOT IN (SELECT DISTINCT url_id FROM visits);
-      UPDATE urls SET
-        visit_count = (SELECT COUNT(*) FROM visits WHERE url_id = urls.id),
-        last_visit = (SELECT MAX(time) FROM visits WHERE url_id = urls.id);
-    `)
+  /**
+   * Delete visits and fix up only the pages they belonged to, so pruning a
+   * few old visits doesn't rescan the whole history on the main thread.
+   */
+  private deleteVisits(where: string, value: number) {
+    this.tx(() => {
+      this.db.exec('CREATE TEMP TABLE IF NOT EXISTS touched (id INTEGER PRIMARY KEY); DELETE FROM touched;')
+      this.db.prepare(`INSERT OR IGNORE INTO touched SELECT DISTINCT url_id FROM visits WHERE ${where}`).run(value)
+      this.db.prepare(`DELETE FROM visits WHERE ${where}`).run(value)
+      this.db.exec(`
+        DELETE FROM urls WHERE id IN (SELECT id FROM touched) AND id NOT IN (SELECT url_id FROM visits WHERE url_id IN (SELECT id FROM touched));
+        UPDATE urls SET
+          visit_count = (SELECT COUNT(*) FROM visits WHERE url_id = urls.id),
+          last_visit = (SELECT MAX(time) FROM visits WHERE url_id = urls.id)
+        WHERE id IN (SELECT id FROM touched);
+        DELETE FROM touched;
+      `)
+    })
   }
 
   /** Bulk import (from Arc): keeps the higher visit count and newer date. */

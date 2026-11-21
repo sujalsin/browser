@@ -1761,3 +1761,103 @@ textarea.code.js {
   border-radius: 6px;
   background: none;
 }
+
+/* ───────────── site sign-in prompt ───────────── */
+
+.auth-prompt {
+  width: min(380px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 20px;
+  border-radius: 14px;
+  background: var(--panel-solid);
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.28);
+  animation: pop-in 110ms ease-out;
+}
+
+.auth-prompt h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.auth-prompt p {
+  margin: 0 0 4px;
+  color: var(--text-dim);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.auth-prompt input {
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--divider);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  outline: none;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.auth-prompt input:focus {
+  border-color: var(--space);
+}
+
+.auth-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.url-text.hover {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+/* ───────────── Task Manager ───────────── */
+
+.task-head {
+  font-size: 11.5px;
+  font-weight: 650;
+  color: var(--text-dim);
+  padding-left: 26px;
+}
+
+.task-head:hover {
+  background: none;
+}
+
+.task-num {
+  width: 76px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.task-num.hot {
+  color: #d9534f;
+  font-weight: 600;
+}
+
+.task-actions {
+  width: 64px;
+  display: flex;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+
+.task-kind {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--divider);
+  flex-shrink: 0;
+}
+
+.task-kind.tab {
+  background: var(--space);
+}

@@ -1,16 +1,16 @@
 import { app } from 'electron'
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { PersistedState } from '../shared/types'
-import { migrate, repair } from './model'
+import { MAX_ARCHIVE, migrate, repair } from './model'
 
-const MAX_ARCHIVE = 500
 
 function filePath(): string {
   return join(app.getPath('userData'), 'state.json')
 }
 
-export function defaultState(): PersistedState {
+function defaultState(): PersistedState {
   return {
     version: 2,
     spaces: [
@@ -77,22 +77,48 @@ export function loadState(): PersistedState {
 
 let timer: NodeJS.Timeout | null = null
 let pending: PersistedState | null = null
+let writing: Promise<void> | null = null
 
-/** Debounced, atomic (write temp file then rename) save. */
+function serialize(state: PersistedState): string {
+  return JSON.stringify({ ...state, archive: state.archive.slice(0, MAX_ARCHIVE) })
+}
+
+/** Debounced, atomic (write temp file then rename) save, off the main thread's critical path. */
 export function saveState(state: PersistedState): void {
   pending = state
   if (timer) return
-  timer = setTimeout(flushState, 1500)
+  timer = setTimeout(() => {
+    timer = null
+    void writeAsync()
+  }, 1500)
 }
 
+async function writeAsync(): Promise<void> {
+  if (writing) await writing
+  if (!pending) return
+  const data = serialize(pending)
+  pending = null
+  const path = filePath()
+  writing = (async () => {
+    try {
+      await writeFile(`${path}.tmp`, data)
+      await rename(`${path}.tmp`, path)
+    } catch (err) {
+      console.error('Could not save browser state:', err)
+    }
+  })()
+  await writing
+  writing = null
+}
+
+/** Write right now, synchronously. Used when the app is quitting. */
 export function flushState(): void {
   if (timer) clearTimeout(timer)
   timer = null
   if (!pending) return
-  const state = { ...pending, archive: pending.archive.slice(0, MAX_ARCHIVE) }
+  const data = serialize(pending)
   pending = null
   const path = filePath()
-  const tmp = `${path}.tmp`
-  writeFileSync(tmp, JSON.stringify(state, null, 2))
-  renameSync(tmp, path)
+  writeFileSync(`${path}.tmp`, data)
+  renameSync(`${path}.tmp`, path)
 }

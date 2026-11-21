@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { normalizeDomain } from '../../shared/boosts'
 import { SPACE_COLORS } from '../../shared/constants'
-import type { AppInfo, Boost, DownloadInfo, HistoryItem, LibraryTab, SearchEngineId, SitePermission, UIState } from '../../shared/types'
+import type { AppInfo, Boost, DownloadInfo, HistoryItem, LibraryTab, SearchEngineId, SitePermission, TaskInfo, UIState } from '../../shared/types'
 import { SEARCH_ENGINES, displayHost } from '../../shared/url'
 import { Favicon } from './Favicon'
 import { Icon, type IconName } from './Icon'
@@ -11,6 +11,7 @@ const TABS: { id: LibraryTab; label: string; icon: IconName; key: string }[] = [
   { id: 'history', label: 'History', icon: 'history', key: '⌘Y' },
   { id: 'downloads', label: 'Downloads', icon: 'download', key: '⇧⌘J' },
   { id: 'boosts', label: 'Boosts', icon: 'boost', key: '' },
+  { id: 'tasks', label: 'Task Manager', icon: 'tasks', key: '' },
   { id: 'settings', label: 'Settings', icon: 'settings', key: '⌘,' },
 ]
 
@@ -47,6 +48,7 @@ export function Library({ state }: { state: UIState }) {
           {tab === 'history' && <HistoryView />}
           {tab === 'downloads' && <DownloadsView state={state} />}
           {tab === 'boosts' && <BoostsView state={state} />}
+          {tab === 'tasks' && <TasksView state={state} />}
           {tab === 'settings' && <SettingsView state={state} />}
         </section>
       </div>
@@ -180,7 +182,7 @@ function HistoryView() {
 
 // ───────────────────────────── Downloads ─────────────────────────────
 
-export function formatBytes(n: number) {
+function formatBytes(n: number) {
   if (!n || n < 0) return '0 B'
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
   const i = Math.min(units.length - 1, Math.floor(Math.log(n) / Math.log(1024)))
@@ -653,6 +655,67 @@ function BoostEditor({ boost }: { boost: Boost }) {
         <button className="lib-button primary" disabled={!dirty} onClick={() => save()}>
           Save
         </button>
+      </div>
+    </div>
+  )
+}
+
+// ───────────────────────────── Task Manager ─────────────────────────────
+
+function TasksView({ state }: { state: UIState }) {
+  const [tasks, setTasks] = useState<TaskInfo[]>([])
+  useEffect(() => {
+    let alive = true
+    const load = () => void window.browser.query<TaskInfo[]>({ type: 'tasks.list' }).then((t) => alive && setTasks(t ?? []))
+    load()
+    const timer = setInterval(load, 2000)
+    return () => {
+      alive = false
+      clearInterval(timer)
+    }
+  }, [])
+  const total = tasks.reduce((n, t) => n + t.memoryMB, 0)
+  const asleep = state.tabs.filter((t) => !state.runtime[t.id]).length
+  const fmt = (mb: number) => (mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`)
+  return (
+    <div className="lib-page">
+      <header className="lib-header">
+        <h2>Task Manager</h2>
+        <span className="set-label small">
+          {fmt(total)} in use · {tasks.filter((t) => t.kind === 'tab').length} tabs loaded, {asleep} asleep
+        </span>
+      </header>
+      <div className="lib-scroll">
+        <ul className="lib-list tasks">
+          <li className="lib-row task-head">
+            <span className="lib-title">Task</span>
+            <span className="task-num">Memory</span>
+            <span className="task-num">CPU</span>
+            <span className="task-actions" />
+          </li>
+          {tasks.map((t) => (
+            <li key={t.pid} className="lib-row">
+              <span className={`task-kind ${t.kind}`} />
+              <span className="lib-title">{t.title}</span>
+              <span className="task-num">{fmt(t.memoryMB)}</span>
+              <span className={`task-num ${t.cpu > 50 ? 'hot' : ''}`}>{t.cpu.toFixed(1)}%</span>
+              <span className="task-actions">
+                {t.tabId && t.canSleep && (
+                  <button
+                    className="lib-button small"
+                    title="Free this tab's memory; it reloads when you open it"
+                    onClick={() => {
+                      dispatch({ type: 'tab.sleep', id: t.tabId! })
+                      setTasks((prev) => prev.filter((x) => x.pid !== t.pid))
+                    }}
+                  >
+                    Sleep
+                  </button>
+                )}
+              </span>
+            </li>
+          ))}
+        </ul>
       </div>
     </div>
   )

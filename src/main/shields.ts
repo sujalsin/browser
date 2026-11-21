@@ -170,14 +170,36 @@ export class Shields {
     }
   }
 
+  // activeFor() runs for every network request, and a page makes hundreds of
+  // them with the same top-level URL: remember the answer for the last few pages.
+  private siteCache = new Map<string, string | null>()
+  private disabledList: string[] | null = null
+  private disabledSet = new Set<string>()
+
+  private cachedSite(pageUrl: string): string | null {
+    let site = this.siteCache.get(pageUrl)
+    if (site === undefined) {
+      site = Shields.siteOf(pageUrl)
+      if (this.siteCache.size >= 64) this.siteCache.delete(this.siteCache.keys().next().value!)
+      this.siteCache.set(pageUrl, site)
+    }
+    return site
+  }
+
   /** Are Shields active for a page with this top-level URL? */
   activeFor(pageUrl: string | undefined): boolean {
     const s = this.getSettings()
     if (!s.enabled) return false
+    if (!pageUrl) return true
     // Never interfere with extension pages (Bitwarden's popup, etc.).
-    if (pageUrl?.startsWith('chrome-extension://')) return false
-    const site = pageUrl ? Shields.siteOf(pageUrl) : null
-    return !site || !s.disabledSites.includes(site)
+    if (pageUrl.startsWith('chrome-extension://')) return false
+    const site = this.cachedSite(pageUrl)
+    if (!site) return true
+    if (this.disabledList !== s.disabledSites) {
+      this.disabledList = s.disabledSites
+      this.disabledSet = new Set(s.disabledSites)
+    }
+    return !this.disabledSet.has(site)
   }
 
   // ───────────────────────────── HTTPS fallback ─────────────────────────────

@@ -183,7 +183,12 @@ export function Sidebar({ state }: { state: UIState }) {
 
           <div className="url-row">
             <button className="url-pill" title="Edit URL (⌘L)" onClick={() => dispatch({ type: 'commandBar.open', mode: active ? 'edit' : 'new' })}>
-              {active ? (
+              {active && state.hoverUrl ? (
+                // Hovering a link: show where it goes (Chrome's status bubble, without an extra view).
+                <span className="url-text hover" title={state.hoverUrl}>
+                  → {state.hoverUrl.replace(/^https?:\/\/(www\.)?/, '')}
+                </span>
+              ) : active ? (
                 <>
                   {active.url.startsWith('https://') && <Icon name="lock" size={12} />}
                   <span className="url-text">{displayHost(active.url)}</span>

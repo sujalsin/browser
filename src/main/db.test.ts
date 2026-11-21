@@ -75,6 +75,19 @@ describe('history', () => {
     expect(h.suggest('old', 5, NOW)).toEqual([]) // search index cleaned up too
   })
 
+  it('pruning old visits leaves other pages and newer visits untouched', () => {
+    const h = db()
+    for (let i = 0; i < 3; i++) h.addVisit('https://keep.com/', 'Keep', NOW - i * 5000)
+    h.addVisit('https://mixed.com/', 'Mixed', NOW - 100 * DAY)
+    h.addVisit('https://mixed.com/', 'Mixed', NOW - 2000)
+    h.addVisit('https://gone.com/', 'Gone', NOW - 100 * DAY)
+    h.prune(NOW - 90 * DAY)
+    expect(h.suggest('keep', 5, NOW)[0]).toMatchObject({ visitCount: 3, lastVisit: NOW })
+    expect(h.suggest('mixed', 5, NOW)[0]).toMatchObject({ visitCount: 1, lastVisit: NOW - 2000 })
+    expect(h.suggest('gone', 5, NOW)).toEqual([])
+    expect(h.historyCount()).toBe(2)
+  })
+
   it('imports pages without lowering existing counts', () => {
     const h = db()
     for (let i = 0; i < 3; i++) h.addVisit('https://a.com/', 'A', NOW - i * 5000)

@@ -53,6 +53,12 @@ if (!app.requestSingleInstanceLock()) {
     event.preventDefault()
     openExternalUrl(url)
   })
+  // Password-protected sites and proxies: without this, Electron just fails the request.
+  app.on('login', (event, _wc, _details, authInfo, callback) => {
+    if (!shell) return
+    event.preventDefault()
+    shell.requestAuth({ host: authInfo.port ? `${authInfo.host}:${authInfo.port}` : authInfo.host, realm: authInfo.realm, isProxy: authInfo.isProxy }, callback)
+  })
   app.whenReady().then(start)
 }
 

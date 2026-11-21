@@ -103,6 +103,7 @@ export function installMenu(getShell: () => BrowserShell | null): void {
         },
         { type: 'separator' },
         { label: 'Copy URL', accelerator: 'CmdOrCtrl+Shift+C', click: withShell((s) => s.copyUrl()) },
+        { label: 'Print…', accelerator: 'CmdOrCtrl+P', click: withShell((s) => s.print()) },
         { type: 'separator' },
         { label: 'History', accelerator: 'CmdOrCtrl+Y', click: withShell((s) => s.openLibrary('history')) },
         { label: 'Downloads', accelerator: 'CmdOrCtrl+Shift+J', click: withShell((s) => s.openLibrary('downloads')) },
@@ -166,6 +167,7 @@ export function installMenu(getShell: () => BrowserShell | null): void {
         { type: 'separator' },
         { role: 'togglefullscreen' },
         { type: 'separator' },
+        { label: 'View Page Source', accelerator: 'Alt+CmdOrCtrl+U', click: withShell((s) => s.viewSource()) },
         { label: 'Developer Tools', accelerator: 'Alt+CmdOrCtrl+I', click: active((wc) => wc.toggleDevTools()) },
         {
           label: 'Browser UI Developer Tools',
@@ -245,7 +247,18 @@ export function installMenu(getShell: () => BrowserShell | null): void {
       ],
     },
     settingsMenu,
-    { role: 'windowMenu' },
+    {
+      label: 'Window',
+      role: 'window',
+      submenu: [
+        { role: 'minimize' },
+        { role: 'zoom' },
+        { type: 'separator' },
+        { label: 'Task Manager', click: withShell((s) => s.openLibrary('tasks')) },
+        { type: 'separator' },
+        { role: 'front' },
+      ],
+    },
   ]
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))

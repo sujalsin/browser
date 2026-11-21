@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { themeStyle } from './App'
 import { Sidebar } from './Sidebar'
 import { CommandBar } from './CommandBar'
@@ -17,7 +17,9 @@ export function Overlay() {
   if (!state) return null
   return (
     <div className={`overlay-root ${state.platform}`} style={themeStyle(state)}>
-      {state.splitDragging ? (
+      {state.auth ? (
+        <AuthPrompt key={`${state.auth.host}|${state.auth.realm}`} state={state} />
+      ) : state.splitDragging ? (
         <SplitDragSurface state={state} />
       ) : state.commandBar ? (
         <CommandBar state={state} />
@@ -113,6 +115,44 @@ function PreviewChrome({ state }: { state: Parameters<typeof Sidebar>[0]['state'
           <Icon name="close" size={14} />
         </button>
       </div>
+    </div>
+  )
+}
+
+/** A site or proxy asks for a username and password (HTTP authentication). */
+function AuthPrompt({ state }: { state: Parameters<typeof Sidebar>[0]['state'] }) {
+  const auth = state.auth!
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const user = useRef<HTMLInputElement>(null)
+  useEffect(() => user.current?.focus(), [])
+  const cancel = () => dispatch({ type: 'auth.cancel' })
+  return (
+    <div className="overlay-backdrop">
+      <form
+        className="auth-prompt"
+        onSubmit={(e) => {
+          e.preventDefault()
+          dispatch({ type: 'auth.submit', username, password })
+        }}
+        onKeyDown={(e) => e.key === 'Escape' && cancel()}
+      >
+        <h2>Sign in</h2>
+        <p>
+          {auth.isProxy ? 'The proxy ' : ''}
+          <b>{auth.host}</b> requires a username and password.{auth.realm ? ` (${auth.realm})` : ''}
+        </p>
+        <input ref={user} value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Username" autoComplete="off" spellCheck={false} />
+        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" autoComplete="off" />
+        <div className="auth-actions">
+          <button type="button" className="lib-button" onClick={cancel}>
+            Cancel
+          </button>
+          <button type="submit" className="lib-button primary">
+            Sign In
+          </button>
+        </div>
+      </form>
     </div>
   )
 }

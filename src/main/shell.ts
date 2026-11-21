@@ -1,7 +1,7 @@
 import { BrowserWindow, Menu, WebContentsView, app, clipboard, dialog, nativeTheme, session, shell as electronShell, type WebContents } from 'electron'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { homedir } from 'node:os'
+import { homedir, totalmem } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { SIDEBAR_WIDTH, SPACE_COLORS, VIEW_GAP, VIEW_RADIUS } from '../shared/constants'
@@ -20,6 +20,7 @@ import type {
   ShieldsSettings,
   Tab,
   TabRuntime,
+  TaskInfo,
   UIState,
 } from '../shared/types'
 import { IPC } from '../shared/types'
@@ -61,6 +62,13 @@ const NEW_TAB_TITLE = 'New Tab'
 /** How often the sidebar UI is refreshed at most. Keeps busy pages cheap. */
 const EMIT_INTERVAL_MS = 50
 const SLEEP_CHECK_MS = 60_000
+/**
+ * How many pages may stay loaded at once before the least recently used ones
+ * are put to sleep early: about 2 per GB of RAM (16 on an 8 GB Mac).
+ */
+const MAX_LOADED_TABS = Math.min(40, Math.max(8, Math.round((totalmem() / 2 ** 30) * 2)))
+/** The find bar's own small page is freed after this long unused (~80 MB). */
+const FIND_VIEW_IDLE_MS = 60_000
 /** The UI only needs recent archive entries; the full list stays on disk. */
 const ARCHIVE_IN_SNAPSHOT = 100
 
@@ -186,6 +194,9 @@ export class BrowserShell {
     })
     this.win.on('closed', () => {
       clearInterval(this.sleepTimer)
+      if (this.findIdleTimer) clearTimeout(this.findIdleTimer)
+      for (const req of this.authQueue.splice(0)) req.callback()
+      if (this.findView && !this.findView.webContents.isDestroyed()) this.findView.webContents.close()
       if (this.emitTimer) clearTimeout(this.emitTimer)
       // Tab views are not owned by the window; tear them down explicitly.
       for (const id of [...this.views.keys()]) this.unload(id)
@@ -263,6 +274,8 @@ export class BrowserShell {
       preview: this.preview ? { ...this.preview, rect: this.previewRect() } : null,
       splitView: this.splitViewInfo(),
       splitDragging: this.splitDragging,
+      auth: this.authQueue[0] ? { host: this.authQueue[0].host, realm: this.authQueue[0].realm, isProxy: this.authQueue[0].isProxy } : null,
+      hoverUrl: this.hoverUrl,
     }
   }
 
@@ -281,7 +294,7 @@ export class BrowserShell {
   }
 
   private overlayVisible() {
-    return !!this.overlay && (!!this.commandBar || this.peek || !!this.library || this.splitDragging || !!this.preview)
+    return !!this.overlay && (!!this.commandBar || this.peek || !!this.library || this.splitDragging || !!this.preview || this.authQueue.length > 0)
   }
 
   /** Keep floating things above the pages, in order: find bar, overlay, Peek card. */
@@ -369,7 +382,7 @@ export class BrowserShell {
     }
     // Command bar, Library, split dragging: whole window. Peek sidebar: just its strip.
     this.overlay?.setBounds(
-      this.commandBar || this.library || this.splitDragging || this.preview
+      this.commandBar || this.library || this.splitDragging || this.preview || this.authQueue.length
         ? { x: 0, y: 0, width, height }
         : { x: 0, y: 0, width: Math.min(width, SIDEBAR_WIDTH + 16), height },
     )
@@ -564,6 +577,24 @@ export class BrowserShell {
       if (mouse.type === 'mouseDown') focusPane()
     })
     wc.on('dom-ready', () => void this.applyBoosts(wc, true))
+    wc.on('will-prevent-unload', (event) => {
+      // The page has unsaved changes (a draft, a form). Without this, Electron
+      // silently refuses to reload or navigate; ask like Chrome does.
+      const choice = dialog.showMessageBoxSync(this.win, {
+        type: 'question',
+        buttons: ['Leave', 'Stay'],
+        defaultId: 1,
+        cancelId: 1,
+        message: 'Leave site?',
+        detail: 'Changes you made may not be saved.',
+      })
+      if (choice === 0) event.preventDefault()
+    })
+    wc.on('update-target-url', (_e, target) => {
+      if (this.state.activeTabId !== id || this.hoverUrl === target) return
+      this.hoverUrl = target
+      this.emit(false)
+    })
     wc.on('found-in-page', (_e, result) => {
       if (!this.find || this.state.activeTabId !== id) return
       this.find.active = result.activeMatchOrdinal
@@ -655,6 +686,7 @@ export class BrowserShell {
     }
     this.views.delete(id)
     this.typedIn.delete(id)
+    this.boostCss.delete(wc.id)
     delete this.runtime[id]
     if (!wc.isDestroyed()) wc.close()
   }
@@ -679,7 +711,31 @@ export class BrowserShell {
       if (rt?.audible || this.typedIn.has(id) || view.webContents.isCurrentlyAudible()) continue
       this.unload(id, true)
     }
+    this.sleepOverBudget()
     this.emit(false)
+  }
+
+  /**
+   * Memory guard: with more than MAX_LOADED_TABS pages loaded, put the least
+   * recently used ones to sleep even if they haven't been idle for the full timer.
+   */
+  private sleepOverBudget() {
+    const excess = this.views.size - MAX_LOADED_TABS
+    if (excess <= 0) return
+    const recent = Date.now() - 2 * 60_000
+    const candidates = [...this.views.entries()]
+      .map(([id, view]) => ({ id, view, tab: this.tab(id) }))
+      .filter(
+        ({ id, view, tab }) =>
+          tab &&
+          !this.attached.includes(id) &&
+          tab.lastActiveAt < recent &&
+          !this.runtime[id]?.audible &&
+          !this.typedIn.has(id) &&
+          !view.webContents.isCurrentlyAudible(),
+      )
+      .sort((a, b) => a.tab!.lastActiveAt - b.tab!.lastActiveAt)
+    for (const { id } of candidates.slice(0, excess)) this.unload(id, true)
   }
 
   // ───────────────────────────── tab operations ─────────────────────────────
@@ -711,6 +767,7 @@ export class BrowserShell {
     if (!tab) return
     if (id !== this.state.activeTabId) this.closeFind()
     this.closePreview()
+    this.hoverUrl = ''
     // Selecting a tab from another space (command bar, archive, extension) switches to it.
     const space = this.space()
     const tabSpace = spaceById(this.state, tab.spaceId)
@@ -1352,6 +1409,84 @@ export class BrowserShell {
     Menu.buildFromTemplate(items).popup({ window: this.win })
   }
 
+  // ───────────────────────────── site sign-in (HTTP auth) ─────────────────────────────
+
+  private hoverUrl = ''
+  private authQueue: { host: string; realm: string; isProxy: boolean; callback: (username?: string, password?: string) => void }[] = []
+
+  /** A server or proxy wants a username and password: ask in the overlay. */
+  requestAuth(info: { host: string; realm: string; isProxy: boolean }, callback: (username?: string, password?: string) => void) {
+    this.authQueue.push({ ...info, callback })
+    if (this.authQueue.length > 1) return // shown when the current one is answered
+    this.closeFind()
+    const overlay = this.ensureOverlay()
+    this.raiseFloating()
+    this.layout()
+    overlay.webContents.focus()
+    this.emitNow()
+  }
+
+  private answerAuth(username?: string, password?: string) {
+    const req = this.authQueue.shift()
+    if (!req) return
+    req.callback(username, password)
+    if (!this.authQueue.length) {
+      if (this.overlay && !this.overlayVisible()) this.win.contentView.removeChildView(this.overlay)
+      this.layout()
+      this.activeWebContents()?.focus()
+    }
+    this.emitNow()
+  }
+
+  // ───────────────────────────── page tools ─────────────────────────────
+
+  print() {
+    this.activeWebContents()?.print({}, () => {})
+  }
+
+  viewSource() {
+    const tab = this.activeTab()
+    if (tab && /^https?:/.test(tab.url)) this.openTab(`view-source:${tab.url}`, { afterTabId: tab.id })
+  }
+
+  /** Task Manager: memory and CPU per process, matched to tabs where possible. */
+  private tasks(): TaskInfo[] {
+    const byPid = new Map<number, { kind: TaskInfo['kind']; title: string; tabId?: string; canSleep?: boolean }>()
+    for (const [id, view] of this.views) {
+      const tab = this.tab(id)
+      byPid.set(view.webContents.getOSProcessId(), {
+        kind: 'tab',
+        title: tab?.title || tab?.url || 'Tab',
+        tabId: id,
+        canSleep: !this.attached.includes(id),
+      })
+    }
+    const ui = (wc: WebContents | undefined, title: string) => wc && !wc.isDestroyed() && byPid.set(wc.getOSProcessId(), { kind: 'ui', title })
+    ui(this.win.webContents, 'Sidebar')
+    ui(this.overlay?.webContents, 'Command bar & Library')
+    ui(this.findView?.webContents, 'Find bar')
+    ui(this.previewView?.webContents, 'Peek preview')
+    return app
+      .getAppMetrics()
+      .map((m): TaskInfo => {
+        const known = byPid.get(m.pid)
+        const kind: TaskInfo['kind'] = known?.kind ?? (m.type === 'Browser' ? 'browser' : m.type === 'GPU' ? 'gpu' : 'other')
+        const title =
+          known?.title ??
+          (m.type === 'Browser' ? 'Browser' : m.type === 'GPU' ? 'Graphics (GPU)' : m.type === 'Tab' ? 'Extension or helper' : m.name || m.serviceName || m.type)
+        return {
+          pid: m.pid,
+          kind,
+          title,
+          tabId: known?.tabId,
+          canSleep: known?.canSleep,
+          memoryMB: Math.round(m.memory.workingSetSize / 1024),
+          cpu: Math.round(m.cpu.percentCPUUsage * 10) / 10,
+        }
+      })
+      .sort((a, b) => b.memoryMB - a.memoryMB)
+  }
+
   // ───────────────────────────── Boosts ─────────────────────────────
 
   /** CSS inserted into each page by Boosts, so it can be replaced when a Boost is edited. */
@@ -1634,6 +1769,8 @@ export class BrowserShell {
     const wc = this.activeWebContents()
     if (!wc || this.commandBar || this.library) return
     this.closePreview()
+    if (this.findIdleTimer) clearTimeout(this.findIdleTimer)
+    this.findIdleTimer = null
     this.find ??= { query: '', active: 0, total: 0, focusToken: 0 }
     this.find.focusToken++
     if (!this.findView) {
@@ -1677,7 +1814,18 @@ export class BrowserShell {
     if (this.findView) this.win.contentView.removeChildView(this.findView)
     wc?.focus()
     this.emit(false)
+    // Keep the bar's page around briefly for a quick second search, then free it.
+    if (this.findIdleTimer) clearTimeout(this.findIdleTimer)
+    this.findIdleTimer = setTimeout(() => {
+      this.findIdleTimer = null
+      const view = this.findView
+      if (!view || this.find) return
+      this.findView = null
+      if (!view.webContents.isDestroyed()) view.webContents.close()
+    }, FIND_VIEW_IDLE_MS)
   }
+
+  private findIdleTimer: NodeJS.Timeout | null = null
 
   /** ⌘G / ⇧⌘G from the menu. */
   findAgain(forward: boolean) {
@@ -1862,6 +2010,8 @@ export class BrowserShell {
         return this.db?.listVisits({ query: q.query ? String(q.query).slice(0, 200) : undefined, before: Number(q.before) || undefined, limit: 200 }) ?? []
       case 'permissions.list':
         return this.db?.listPermissions() ?? []
+      case 'tasks.list':
+        return this.tasks()
       case 'app.info': {
         const info: AppInfo = {
           version: app.getVersion(),
@@ -1944,7 +2094,7 @@ export class BrowserShell {
       case 'tabs.tidy':
         return this.tidy()
       case 'library.open':
-        return this.openLibrary(['history', 'downloads', 'settings'].includes(action.tab) ? action.tab : 'history')
+        return this.openLibrary(['history', 'downloads', 'settings', 'boosts', 'tasks'].includes(action.tab) ? action.tab : 'history')
       case 'library.close':
         return this.closeLibrary()
       case 'download.act':
@@ -1974,6 +2124,10 @@ export class BrowserShell {
         app.setAsDefaultProtocolClient('http')
         app.setAsDefaultProtocolClient('https')
         return this.emit(false)
+      case 'auth.submit':
+        return this.answerAuth(String(action.username ?? ''), String(action.password ?? ''))
+      case 'auth.cancel':
+        return this.answerAuth()
       case 'split.create':
         return this.createSplit(String(action.tabId))
       case 'split.newTab':

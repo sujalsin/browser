@@ -28,20 +28,6 @@ const ASK: Record<string, string> = {
   'top-level-storage-access': 'use cookies across sites',
 }
 
-/** Human name for a permission in Settings. */
-export const PERMISSION_LABELS: Record<string, string> = {
-  media: 'Camera & microphone',
-  geolocation: 'Location',
-  notifications: 'Notifications',
-  'clipboard-read': 'Clipboard',
-  'display-capture': 'Screen recording',
-  midi: 'MIDI devices',
-  midiSysex: 'MIDI devices',
-  'idle-detection': 'Idle detection',
-  'storage-access': 'Cross-site cookies',
-  'top-level-storage-access': 'Cross-site cookies',
-}
-
 /** Remembered decisions: "partition|origin|permission" → allowed. */
 const decisions = new Map<string, boolean>()
 let store: BrowserDB | null = null

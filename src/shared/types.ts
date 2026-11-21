@@ -221,6 +221,22 @@ export interface UIState extends PersistedState {
   splitView: { id: string; ratio: number; panes: { tabId: string; x: number; y: number; width: number; height: number }[] } | null
   /** The split divider is being dragged (the overlay captures the mouse). */
   splitDragging: boolean
+  /** A site (or proxy) is asking for a username and password. */
+  auth: { host: string; realm: string; isProxy: boolean } | null
+  /** Where the link under the pointer goes (shown in the address pill). */
+  hoverUrl: string
+}
+
+/** One row in the Task Manager. */
+export interface TaskInfo {
+  pid: number
+  kind: 'tab' | 'browser' | 'gpu' | 'ui' | 'other'
+  title: string
+  tabId?: string
+  /** The tab can be put to sleep (loaded, not on screen). */
+  canSleep?: boolean
+  memoryMB: number
+  cpu: number
 }
 
 export interface PreviewState {
@@ -244,7 +260,7 @@ export interface LittleState {
   platform: string
 }
 
-export type LibraryTab = 'history' | 'downloads' | 'settings' | 'boosts'
+export type LibraryTab = 'history' | 'downloads' | 'settings' | 'boosts' | 'tasks'
 
 export interface FindState {
   query: string
@@ -297,6 +313,8 @@ export type Action =
   | { type: 'find.open' }
   | { type: 'find.query'; text: string; forward?: boolean; next?: boolean }
   | { type: 'find.close' }
+  | { type: 'auth.submit'; username: string; password: string }
+  | { type: 'auth.cancel' }
   | { type: 'split.create'; tabId: string }
   | { type: 'split.newTab' }
   | { type: 'split.exit'; id: string }
@@ -334,6 +352,7 @@ export type Query =
   | { type: 'history.list'; query?: string; before?: number }
   | { type: 'permissions.list' }
   | { type: 'app.info' }
+  | { type: 'tasks.list' }
 
 export interface AppInfo {
   version: string

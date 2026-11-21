@@ -25,6 +25,7 @@ const PATHS = {
   tidy: 'M4 6h16M4 12h10M4 18h6',
   up: 'M6 15l6-6 6 6',
   split: 'M4 5h16v14H4zM12 5v14',
+  tasks: 'M4 19V9M10 19V5M16 19v-7M21 19H3',
   external: 'M14 4h6v6M20 4l-9 9M18 14v5H5V6h5',
   zap: 'M13 3L4 14h7l-1 7 9-11h-7z',
   boost: 'M12 2l2.4 6.6L21 9l-5 4.4L17.5 21 12 17.3 6.5 21 8 13.4 3 9l6.6-.4z',

@@ -15,7 +15,7 @@ const IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?(?:[/?#]|$)/
 /** example.com, sub.example.co.uk/path — needs a dot and a plausible TLD. */
 const DOMAIN = /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z][a-z0-9-]{1,62}\.?(?::\d+)?(?:[/?#]|$)/i
 
-export function searchUrl(query: string, engine: SearchEngineId): string {
+function searchUrl(query: string, engine: SearchEngineId): string {
   return SEARCH_ENGINES[engine].template.replace('%s', encodeURIComponent(query))
 }
 

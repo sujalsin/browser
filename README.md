@@ -91,6 +91,9 @@ over the page, like Arc.
 
 ## Everyday features
 
+- **Print** (⌘P), **View Page Source** (⌥⌘U), and a "Leave site?" prompt before losing unsaved work.
+- **Link preview** — hover a link and the address pill shows where it goes.
+- **Site sign-in** — password-protected sites and proxies show a sign-in prompt.
 - **Find in page** (⌘F) — Enter / ⇧Enter or ⌘G / ⇧⌘G step through matches, Esc closes.
 - **History** (⌘Y) — searchable, grouped by day; delete single pages or clear a time range.
   Kept for 90 days. ⌘T suggests pages from history as you type.
@@ -145,6 +148,9 @@ They are compiled on a background thread and cached, so they don't slow down sta
   VP9/AV1 video, which Intel Macs decode in software, using several CPU cores. H.264 is decoded by
   the GPU instead. YouTube tops out at 1080p in this mode.
 - **Cheap UI updates.** The sidebar redraws at most every 50 ms, however busy the pages are.
+- **Memory guard.** At most ~2 pages per GB of RAM stay loaded (16 on an 8 GB Mac); beyond that the
+  least recently used tabs sleep early. Tabs playing audio or with typed text are never touched.
+- **Task Manager** (Window → Task Manager) shows memory and CPU per tab, with a Sleep button.
 - **Shields** (above) are the biggest win: ads and trackers are most of a page's CPU use.
 
 ## Keep it secure
