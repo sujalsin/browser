@@ -146,6 +146,9 @@ async function start() {
 
   // One-time setup per profile (session partition); several spaces can share one.
   const prepared = new Map<string, Promise<void>>()
+  // The interface's own session: it fetches the site icons shown in the sidebar.
+  attachIdentityHeaders(session.defaultSession)
+
   const prepareSession = (partition: string, opts: { private?: boolean } = {}): Promise<void> => {
     let ready = prepared.get(partition)
     if (!ready) {

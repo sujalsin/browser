@@ -164,9 +164,11 @@ not play in `npm run dev`.
 Settings shows at the bottom whether protected video is ready. The first launch downloads the
 module, so give it a minute online.
 
-Websites see this browser as Google Chrome (same user agent and browser "brand" details), because
-streaming and sign-in sites reject or misbehave for browsers they don't know. If a streaming site
-still shows an error, reload once, then try with Shields off for that site (the shield button).
+Websites see this browser as a Chromium browser with a Chrome-style user agent, which is what it
+is. It does not claim to be Google Chrome itself: Google can tell, and refuses sign-in to browsers
+that pretend. Google's sign-in pages alone are sent a Firefox user agent, because they reject
+browsers built on Electron otherwise. If a streaming site shows an error, reload once, then try
+with Shields off for that site (the shield button).
 
 ## Shields (ad and tracker blocking)
 

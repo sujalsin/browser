@@ -1,60 +1,47 @@
 // How this browser identifies itself to websites (no Electron here: unit-tested).
 //
-// It presents itself as Chrome, because sites such as Google sign-in and
-// Netflix refuse or misbehave for browsers they don't recognise. Chrome
-// identifies itself in two places that must agree:
-//   1. the User-Agent string, and
-//   2. "client hints": Sec-CH-UA request headers and navigator.userAgentData,
-//      which list the browser's "brands".
+// It is a Chromium browser and says so, the way a plain Chromium build does:
+//   - a Chrome-style User-Agent string, and
+//   - "client hints" (Sec-CH-UA request headers, navigator.userAgentData) whose
+//     brand list says "Chromium".
+// It does not claim to be Google Chrome itself. Google can tell that it isn't,
+// and refuses sign-in to browsers that pretend ("This browser or app may not be
+// secure").
 
 export interface Brand {
   brand: string
   version: string
 }
 
-// Chrome adds a deliberately odd brand ("grease", e.g. "Not:A-Brand") and
-// shuffles the list, both derived from the major version, so that sites can't
-// depend on the list's exact shape. This is Chromium's algorithm
-// (GenerateBrandVersionList in components/embedder_support/user_agent_utils.cc).
+// Chromium adds a deliberately odd brand ("grease", e.g. "Not:A-Brand") and
+// orders the list by version, so that sites can't depend on its exact shape.
+// This is its algorithm (GenerateBrandVersionList in
+// components/embedder_support/user_agent_utils.cc) for a build with no product
+// brand of its own.
 const GREASE_CHARS = [' ', '(', ':', '-', '.', '/', ')', ';', '=', '?', '_']
 const GREASE_VERSIONS = ['8', '99', '24']
-const ORDERS = [
-  [0, 1, 2],
-  [0, 2, 1],
-  [1, 0, 2],
-  [1, 2, 0],
-  [2, 0, 1],
-  [2, 1, 0],
-]
 
-/** The brand list Google Chrome of this major version reports, in Chrome's order. */
-export function chromeBrands(major: number): Brand[] {
-  const version = String(major)
+/** The brand list a Chromium build of this major version reports, in its order. */
+export function chromiumBrands(major: number): Brand[] {
   const grease: Brand = {
     brand: `Not${GREASE_CHARS[major % GREASE_CHARS.length]}A${GREASE_CHARS[(major + 1) % GREASE_CHARS.length]}Brand`,
     version: GREASE_VERSIONS[major % GREASE_VERSIONS.length],
   }
-  const order = ORDERS[major % ORDERS.length]
   const list: Brand[] = []
-  list[order[0]] = grease
-  list[order[1]] = { brand: 'Chromium', version }
-  list[order[2]] = { brand: 'Google Chrome', version }
+  list[major % 2] = grease
+  list[(major + 1) % 2] = { brand: 'Chromium', version: String(major) }
   return list
 }
 
-/** The same list with full version numbers ("156.0.8078.75"; the grease brand gets "8.0.0.0"). */
-export function fullVersionBrands(brands: Brand[], fullVersion: string): Brand[] {
-  return brands.map((b) => ({ brand: b.brand, version: b.brand.startsWith('Not') ? `${b.version}.0.0.0` : fullVersion }))
-}
-
-/** A brand list as a Sec-CH-UA header value: `"Chromium";v="156", "Google Chrome";v="156", …`. */
+/** A brand list as a Sec-CH-UA header value: `"Not:A-Brand";v="8", "Chromium";v="156"`. */
 export function brandHeader(brands: Brand[]): string {
   return brands.map((b) => `"${b.brand}";v="${b.version}"`).join(', ')
 }
 
 /**
- * A plain Chrome User-Agent from Electron's: drops the Electron and app tokens
- * and, like Chrome, reports only the major version ("Chrome/156.0.0.0").
+ * A plain Chrome-style User-Agent from Electron's: drops the Electron and app
+ * tokens and, like Chrome and Chromium, reports only the major version
+ * ("Chrome/156.0.0.0").
  */
 export function chromeUserAgent(electronUserAgent: string): string {
   return electronUserAgent
@@ -67,15 +54,33 @@ export function hintPlatform(platform: string): string {
   return platform === 'darwin' ? 'macOS' : platform === 'win32' ? 'Windows' : 'Linux'
 }
 
-/** OS version as client hints give it: always three parts ("26.1" → "26.1.0"). */
-export function hintPlatformVersion(version: string): string {
-  const parts = version.split('.').filter((p) => /^\d+$/.test(p))
-  if (!parts.length) return ''
-  while (parts.length < 3) parts.push('0')
-  return parts.slice(0, 3).join('.')
-}
-
-/** Chrome sends client hints only to secure pages (https, or this computer). */
+/** Chromium sends client hints only to secure pages (https, or this computer). */
 export function sendsClientHints(url: string): boolean {
   return url.startsWith('https://') || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/.test(url)
+}
+
+// ───────────────────────────── Google sign-in ─────────────────────────────
+//
+// Google's sign-in pages run extra checks on anything that presents itself as a
+// Chrome-family browser, and reject browsers built on an embedded engine such
+// as Electron. They don't run them for Firefox. So requests to the sign-in
+// host, and only those, go out with a Firefox User-Agent. This is the approach
+// the Min browser (also Electron) has used for years; see its UASwitcher.js.
+
+/** Is this request for Google's sign-in host? */
+export function isGoogleSignIn(url: string): boolean {
+  return url.startsWith('https://accounts.google.com/')
+}
+
+/**
+ * A current Firefox User-Agent. Firefox releases about every four weeks; this
+ * estimates the current version from the date, counting from version 91
+ * (10 August 2021), so it stays plausible without ever needing an update.
+ */
+export function firefoxUserAgent(platform: string, now: number): string {
+  const FOUR_WEEKS_ISH = 4.1 * 7 * 24 * 60 * 60 * 1000
+  const version = 91 + Math.floor((now - Date.UTC(2021, 7, 10)) / FOUR_WEEKS_ISH)
+  const system =
+    platform === 'darwin' ? 'Macintosh; Intel Mac OS X 10.15' : platform === 'win32' ? 'Windows NT 10.0; Win64; x64' : 'X11; Linux x86_64'
+  return `Mozilla/5.0 (${system}; rv:${version}.0) Gecko/20100101 Firefox/${version}.0`
 }
