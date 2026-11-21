@@ -475,6 +475,9 @@ function SettingsView({ state }: { state: UIState }) {
               <option value={0}>Never</option>
             </select>
           </Row>
+          <Row label="Picture-in-picture when switching tabs" hint="A playing video pops out when you leave its tab and returns when you come back. ⌥⌘P does it by hand.">
+            <Toggle label="Automatic picture-in-picture" on={s.autoPip} onChange={(v) => dispatch({ type: 'settings.update', patch: { autoPip: v } })} />
+          </Row>
           <Row label="Prefer H.264 video" hint="Much less CPU on Intel Macs; YouTube tops out at 1080p.">
             <Toggle label="Prefer H.264 video" on={s.preferH264} onChange={(v) => dispatch({ type: 'settings.update', patch: { preferH264: v } })} />
           </Row>

@@ -175,6 +175,7 @@ export function installMenu(getShell: () => BrowserShell | null): void {
           click: withShell((s) => void s.translateActive()),
         },
         { label: 'Show Original', click: withShell((s) => void s.showOriginal()) },
+        { label: 'Picture in Picture', accelerator: 'Alt+CmdOrCtrl+P', click: withShell((s) => s.togglePip()) },
         { type: 'separator' },
         { label: 'View Page Source', accelerator: 'Alt+CmdOrCtrl+U', click: withShell((s) => s.viewSource()) },
         { label: 'Developer Tools', accelerator: 'Alt+CmdOrCtrl+I', click: active((wc) => wc.toggleDevTools()) },

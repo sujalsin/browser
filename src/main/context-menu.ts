@@ -28,6 +28,10 @@ export function attachWebContextMenu(shell: BrowserShell, wc: WebContents): void
       )
     }
 
+    if (params.mediaType === 'video') {
+      items.push({ label: 'Picture in Picture', click: () => shell.togglePip(wc) }, { type: 'separator' })
+    }
+
     if (params.isEditable) {
       // Spelling suggestions first, like Chrome.
       for (const s of params.dictionarySuggestions.slice(0, 4)) {

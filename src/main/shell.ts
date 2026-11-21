@@ -57,6 +57,7 @@ import type { Downloads } from './downloads'
 import { forgetPartitionPermissions, forgetPermission } from './permissions'
 import { LittleWindow } from './little'
 import { Shields } from './shields'
+import { pictureInPicture } from './pip'
 import { showSiteInfo } from './site-info'
 import { restorePage, translatePage } from './translate'
 import { flushState, saveState } from './store'
@@ -791,6 +792,7 @@ export class BrowserShell {
     this.space().lastTabId = id
     const view = this.ensureView(tab)
     this.attach(id)
+    this.autoPip(prev, id)
     if (!this.commandBar) view.webContents.focus()
     if (!isPrivateTab(this.state, tab)) getExtensions(this.partitionOf(tab)).selectTab(view.webContents)
     this.emit()
@@ -1537,6 +1539,34 @@ export class BrowserShell {
     this.emit(false)
   }
 
+  /** Tab whose video was popped out automatically when you switched away from it. */
+  private pipTabId: string | null = null
+
+  /** View → Picture in Picture, and the video right-click menu. */
+  togglePip(wc = this.activeWebContents()) {
+    if (wc) void pictureInPicture(wc, 'toggle', true)
+  }
+
+  /**
+   * Like Arc: leaving a tab that is playing video with sound pops the video
+   * out; coming back to that tab puts it back.
+   */
+  private autoPip(prev: Tab | undefined, nextId: string) {
+    if (this.pipTabId === nextId) {
+      const wc = this.views.get(nextId)?.webContents
+      this.pipTabId = null
+      if (wc) void pictureInPicture(wc, 'exit')
+    }
+    if (!prev || prev.id === nextId || !this.state.settings.autoPip) return
+    const rt = this.runtime[prev.id]
+    const wc = this.views.get(prev.id)?.webContents
+    // Still on screen (the other half of a split), silent or muted: leave it be.
+    if (!wc || !rt?.audible || rt.muted || this.attached.includes(prev.id)) return
+    void pictureInPicture(wc, 'enter').then((result) => {
+      if (result === 'ok') this.pipTabId = prev.id
+    })
+  }
+
   /** Is this page currently showing a translation? (for the page's right-click menu) */
   isTranslated(wc: WebContents): boolean {
     const id = this.tabIdForWebContents(wc)
@@ -2180,6 +2210,8 @@ export class BrowserShell {
         return void this.translateActive()
       case 'page.showOriginal':
         return void this.showOriginal()
+      case 'page.pip':
+        return this.togglePip()
       case 'site.info': {
         const tab = this.activeTab()
         if (!tab) return
