@@ -201,6 +201,18 @@ They are compiled on a background thread and cached, so they don't slow down sta
 - **Task Manager** (Window → Task Manager) shows memory and CPU per tab, with a Sleep button.
 - **Shields** (above) are the biggest win: ads and trackers are most of a page's CPU use.
 
+## Passkeys
+
+Signing in with a passkey that lives in iCloud Keychain, on your phone, or in Chrome does not work
+in this browser. macOS only hands those to apps Apple has approved as browsers, or to apps a
+website has listed as its own; a personal build is neither. When a site waits for a passkey
+("Verifying it's you…"), choose **Try another way** and use your password or a code. You stay
+signed in afterwards, so it is a one-time step per site and space.
+
+A USB security key should work, since it needs nothing from macOS. Passkeys stored in the
+Bitwarden extension may work too (the extension answers the site itself); neither has been tested
+here.
+
 ## Keep it secure
 
 Chromium security fixes reach this browser through Electron releases. Check at least monthly at
