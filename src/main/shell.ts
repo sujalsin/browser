@@ -1634,7 +1634,9 @@ export class BrowserShell {
     const matches = boostsFor(this.state.boosts, wc.getURL())
     const keys: string[] = []
     for (const b of matches) {
-      if (b.css.trim()) keys.push(await wc.insertCSS(b.css, { cssOrigin: 'user' }).catch(() => ''))
+      // Author origin (the default), not 'user': Electron 45.2 cannot remove user-origin
+      // CSS again, which would leave a disabled or edited Boost stuck on the page.
+      if (b.css.trim()) keys.push(await wc.insertCSS(b.css).catch(() => ''))
       if (withJs && b.js.trim()) void wc.executeJavaScript(wrapBoostScript(b.js)).catch(() => {})
     }
     if (keys.length) this.boostCss.set(wc.id, keys.filter(Boolean))

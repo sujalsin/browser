@@ -58,6 +58,9 @@ The Bitwarden button appears under the address pill in the sidebar.
 | ⌘F / ⌘G / ⇧⌘G | Find in page / next / previous |
 | ⌃⇧= / ⌃⇧- | Split view with a new tab / exit split view |
 | ⌥⌘N | New Little Arc window |
+| ⇧⌘N | Private browsing |
+| ⌥⌘T | Translate page |
+| ⌥⌘P | Picture-in-picture |
 | ⇧-click a link | Open it in Peek |
 | ⌘Y | History |
 | ⇧⌘J | Downloads |
@@ -122,6 +125,44 @@ over the page, like Arc.
 - **Themes** — Settings → Appearance: light, dark or match the system (sites with a dark mode
   follow it), and a color — or a two-color gradient — for each space.
 
+## From Chrome
+
+- **Private browsing** (⇧⌘N) — a private space: nothing is added to history, cookies and logins are
+  separate and wiped when you close it, nothing about it is saved to disk, extensions are off.
+  Shields still apply. Close it with the Close button in its banner.
+- **Site info** — click the lock at the left of the address: is the connection secure, what the
+  site may do (Ask / Allow / Block for camera, location, notifications…), how many cookies it has,
+  and Clear Cookies and Site Data.
+- **Translate** (⌥⌘T, or right-click the page) — translates the page in place; View → Show Original
+  puts it back. Choose the language in Settings. The page's text is sent to Google Translate only
+  when you ask. Sentences broken up by links or bold text are translated in pieces, so wording can
+  be rougher than Chrome's.
+- **Picture-in-picture** (⌥⌘P, or right-click a video) — and, like Arc, a video playing with sound
+  pops out by itself when you switch tabs and returns when you come back (Settings to turn off).
+
+## Netflix, Spotify and other protected video
+
+This browser uses a build of Electron that includes Widevine, the copy-protection module those
+services require. Spotify and many others work out of the box. Netflix, Disney+ and a few more
+also insist that the app itself is signed for Widevine, which is free but needs a one-time setup
+on each Mac you build on:
+
+```bash
+brew install pipx && pipx install castlabs-evs
+```
+
+```bash
+evs-account signup
+```
+
+`signup` asks for an email and a password and sends a confirmation code. After that, every
+`npm run dist:mac…` signs the app automatically (you'll see it in the build output). Without it the
+build still works and prints a warning; only those few services won't play. Protected video does
+not play in `npm run dev`.
+
+Settings shows at the bottom whether protected video is ready. The first launch downloads the
+module, so give it a minute online.
+
 ## Shields (ad and tracker blocking)
 
 Click the shield next to the address in the sidebar. The number is how many ads and trackers
@@ -155,11 +196,15 @@ They are compiled on a background thread and cached, so they don't slow down sta
 
 ## Keep it secure
 
-Chromium security fixes reach this browser through Electron releases. Update at least monthly:
+Chromium security fixes reach this browser through Electron releases. Check at least monthly at
+https://github.com/castlabs/electron-releases/releases for a newer `+wvcus` version (the
+Widevine-enabled build; it usually follows official Electron by a few days) and install it:
 
 ```bash
-npm update electron && npm run dist:mac
+npm install "https://github.com/castlabs/electron-releases#v45.2.1+wvcus" --save-dev
 ```
+
+(with the new version number in place of `45.2.1`), then build again.
 
 ## Project layout
 

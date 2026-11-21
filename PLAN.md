@@ -9,7 +9,7 @@ Arc's keyboard-first workflow, and Brave-style Shields — without the AI featur
 |---|---|
 | Machines | Intel Mac on macOS Tahoe (26) and Apple Silicon (M5) on Tahoe |
 | Performance | Must feel fast on the (slow) Intel Mac: lazy loading, tab sleeping, H.264 video, ad blocking |
-| Engine | Electron (Chromium), latest stable — currently 45.x, ships `darwin-x64` and `darwin-arm64` |
+| Engine | Electron for Content Security (castlabs build of Electron with Widevine), 45.x, `darwin-x64` and `darwin-arm64` |
 | Must-have extension | **Bitwarden** (via `electron-chrome-extensions` + Chrome Web Store install) |
 | Tidy | Both: **Clear** (archive unpinned Today tabs) and **Tidy** (rule-based grouping into folders, no AI) |
 | Distribution | Local only. Built per-machine or as a universal `.dmg`, ad-hoc signed |
@@ -121,6 +121,7 @@ alongside → revisit the engine choice before investing more.
 - **Phase 1 — The Arc core** ✅ done: spaces (colors, optional separate profile, ⌃1–9, swipe), favorites per profile, folders in pinned and Today, drag and drop everywhere, auto-archive (12h default), rule-based Tidy (duplicates + group by site), Clear, cross-space ⌘T search. Data model is a tree (src/main/model.ts) with unit tests and automatic migration from v1.
 - **Phase 3 — Daily driver** ✅ done: history (node:sqlite + FTS5, 90-day retention, ⌘T suggestions), downloads manager, find in page, persisted per-profile site permissions, Library overlay (History / Downloads / Settings), Arc import (spaces, colors, pinned, folders, Today, favorites, profiles, history; format per Firefox's/Zen's Arc migrators).
 - **Phase 4 — Polish** ✅ done: split view (2 panes, draggable divider, focus follows clicks), Peek (pinned-tab links, ⇧-click, context menu), Little Arc (⌥⌘N, links from other apps), Boosts with Zap (per-site CSS/JS, live), themes (System/Light/Dark, per-space color pickers and gradients).
+- **Phase 5 — From Chrome** ✅ done: private browsing (in-memory space, nothing persisted), site info menu, in-place page translation, picture-in-picture (manual and automatic), Widevine via castlabs Electron (VMP signing in the afterPack hook), Task Manager, print, view source, HTTP auth prompt, unsaved-changes prompt, memory guard.
 
 ## Development
 
