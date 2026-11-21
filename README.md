@@ -201,6 +201,12 @@ They are compiled on a background thread and cached, so they don't slow down sta
 - **Task Manager** (Window → Task Manager) shows memory and CPU per tab, with a Sleep button.
 - **Shields** (above) are the biggest win: ads and trackers are most of a page's CPU use.
 
+## Signing in with Google on other sites
+
+"Continue with Google" buttons open Google's sign-in window. (Chrome can instead show an account
+chooser of its own; this browser can't, so that mechanism is switched off and sites fall back to
+the window.) Google's one-tap prompt in the corner of a page may not appear.
+
 ## Passkeys
 
 Signing in with a passkey that lives in iCloud Keychain, on your phone, or in Chrome does not work

@@ -22,6 +22,17 @@ app.setName('Browser')
 const OWN_USER_AGENT = app.userAgentFallback
 app.userAgentFallback = chromeUserAgent(OWN_USER_AGENT)
 
+// Chromium features that this app would advertise to websites but cannot
+// deliver, because the part the browser has to show is missing in Electron.
+// Sites test for the feature and, finding it, rely on it; with it switched off
+// they fall back to a way that works.
+//
+//   FedCm: "Sign in with Google" through an account chooser drawn by the
+//   browser. Google's sign-in library uses it when a site asks to (Viki does);
+//   the request then fails and the button does nothing. Without it the library
+//   opens Google's sign-in window instead.
+app.commandLine.appendSwitch('disable-features', 'FedCm')
+
 let shell: BrowserShell | null = null
 let db: BrowserDB | null = null
 let extensionsReady = false
