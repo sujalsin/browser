@@ -57,6 +57,7 @@ import type { Downloads } from './downloads'
 import { forgetPartitionPermissions, forgetPermission } from './permissions'
 import { applyChromeIdentity } from './identity'
 import { pagePreferences } from './page-prefs'
+import { WINDOW_BUTTONS, windowButtons } from '../shared/window-buttons'
 import { LittleWindow } from './little'
 import { Shields } from './shields'
 import { pictureInPicture } from './pip'
@@ -64,8 +65,6 @@ import { showSiteInfo } from './site-info'
 import { restorePage, translatePage } from './translate'
 import { flushState, saveState } from './store'
 
-/** Where the macOS window buttons sit: centered in the strip at the top of the sidebar. */
-const WINDOW_BUTTONS = { x: 16, y: Math.round(SIDEBAR_TOP_HEIGHT / 2) - 6 }
 const MAX_CLOSED = 25
 const NEW_TAB_TITLE = 'New Tab'
 /** How often the sidebar UI is refreshed at most. Keeps busy pages cheap. */
@@ -197,6 +196,7 @@ export class BrowserShell {
     this.win.on('resize', () => this.layout())
     for (const ev of ['enter-full-screen', 'leave-full-screen'] as const) {
       this.win.on(ev as 'enter-full-screen', () => {
+        this.applyWindowButtons()
         this.layout()
         this.emit() // the sidebar drops the gap it leaves for the window buttons
       })
@@ -409,14 +409,12 @@ export class BrowserShell {
     }
   }
 
-  /**
-   * macOS window buttons live in the sidebar: hide them when it is hidden. The
-   * hover sidebar floats a little in from the window's corner, so they move in with it.
-   */
+  /** Show, hide and place the macOS window buttons (see shared/window-buttons.ts). */
   private applyWindowButtons() {
     if (process.platform !== 'darwin' || this.win.isDestroyed()) return
-    this.win.setWindowButtonVisibility(this.state.sidebarVisible || this.peek)
-    this.win.setWindowButtonPosition(this.peek ? { x: WINDOW_BUTTONS.x + VIEW_GAP, y: WINDOW_BUTTONS.y + VIEW_GAP } : WINDOW_BUTTONS)
+    const { visible, position } = windowButtons({ sidebarVisible: this.state.sidebarVisible, hoverSidebar: this.peek, fullscreen: this.win.isFullScreen() })
+    this.win.setWindowButtonVisibility(visible)
+    this.win.setWindowButtonPosition(position)
   }
 
   /** Show tab `id` (and its split partner) in the content area, or nothing. */
