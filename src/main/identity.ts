@@ -1,5 +1,5 @@
 import type { Session } from 'electron'
-import { brandHeader, chromiumBrands, firefoxUserAgent, hintPlatform, isGoogleSignIn, sendsClientHints } from '../shared/identity'
+import { brandHeader, chromiumBrands, hintPlatform, isGoogleSignIn, sendsClientHints } from '../shared/identity'
 
 // What this browser tells websites about itself (see shared/identity.ts for
 // the reasoning). Electron sets the User-Agent string; two things are put
@@ -10,13 +10,14 @@ import { brandHeader, chromiumBrands, firefoxUserAgent, hintPlatform, isGoogleSi
 //     Sec-CH-UA-Platform with them. A "Chrome 156" that leaves them out stands
 //     out to bot checks. They are added, with the values Chromium itself puts
 //     on every other request.
-//   - Requests to Google's sign-in host carry a Firefox User-Agent.
+//   - Requests to Google's sign-in hosts carry the app's own, unedited
+//     User-Agent, with its name in it.
 
 const SEC_CH_UA = brandHeader(chromiumBrands(Number(process.versions.chrome.split('.')[0])))
 const SEC_CH_UA_PLATFORM = `"${hintPlatform(process.platform)}"`
-const FIREFOX_USER_AGENT = firefoxUserAgent(process.platform, Date.now())
 
-export function attachIdentityHeaders(ses: Session): void {
+/** `ownUserAgent`: Electron's User-Agent for this app before it was made to look like plain Chrome. */
+export function attachIdentityHeaders(ses: Session, ownUserAgent: string): void {
   ses.webRequest.onBeforeSendHeaders((details, callback) => {
     const headers = details.requestHeaders
     let changed = false
@@ -30,7 +31,7 @@ export function attachIdentityHeaders(ses: Session): void {
       }
     }
     if (isGoogleSignIn(details.url)) {
-      headers['User-Agent'] = FIREFOX_USER_AGENT
+      headers['User-Agent'] = ownUserAgent
       changed = true
     }
     callback(changed ? { requestHeaders: headers } : {})

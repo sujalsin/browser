@@ -4,9 +4,8 @@
 //   - a Chrome-style User-Agent string, and
 //   - "client hints" (Sec-CH-UA request headers, navigator.userAgentData) whose
 //     brand list says "Chromium".
-// It does not claim to be Google Chrome itself. Google can tell that it isn't,
-// and refuses sign-in to browsers that pretend ("This browser or app may not be
-// secure").
+// It does not claim the Google Chrome brand. On Google's sign-in pages it goes
+// one step further and names itself (see the end of this file).
 
 export interface Brand {
   brand: string
@@ -61,26 +60,18 @@ export function sendsClientHints(url: string): boolean {
 
 // ───────────────────────────── Google sign-in ─────────────────────────────
 //
-// Google's sign-in pages run extra checks on anything that presents itself as a
-// Chrome-family browser, and reject browsers built on an embedded engine such
-// as Electron. They don't run them for Firefox. So requests to the sign-in
-// host, and only those, go out with a Firefox User-Agent. This is the approach
-// the Min browser (also Electron) has used for years; see its UASwitcher.js.
+// Google's sign-in refuses a browser whose User-Agent is exactly Chrome's when
+// the browser behind it is not Chrome ("This browser or app may not be secure").
+// It accepts one that says what it is: the same string with the app's own name
+// in it, the way Edge and Opera add theirs. Everywhere else the plain string
+// stays, because some sites turn away names they don't know; the sign-in hosts
+// get the honest one.
+//
+// Measured against the real sign-in page (Chromium 156, November 2026), with a
+// made-up address: plain Chrome string, refused 4 of 4; a Firefox string on
+// these hosts, refused 1 of 4; the app's own string, accepted every time.
 
-/** Is this request for Google's sign-in host? */
+/** Is this request for one of Google's sign-in hosts? */
 export function isGoogleSignIn(url: string): boolean {
-  return url.startsWith('https://accounts.google.com/')
-}
-
-/**
- * A current Firefox User-Agent. Firefox releases about every four weeks; this
- * estimates the current version from the date, counting from version 91
- * (10 August 2021), so it stays plausible without ever needing an update.
- */
-export function firefoxUserAgent(platform: string, now: number): string {
-  const FOUR_WEEKS_ISH = 4.1 * 7 * 24 * 60 * 60 * 1000
-  const version = 91 + Math.floor((now - Date.UTC(2021, 7, 10)) / FOUR_WEEKS_ISH)
-  const system =
-    platform === 'darwin' ? 'Macintosh; Intel Mac OS X 10.15' : platform === 'win32' ? 'Windows NT 10.0; Win64; x64' : 'X11; Linux x86_64'
-  return `Mozilla/5.0 (${system}; rv:${version}.0) Gecko/20100101 Firefox/${version}.0`
+  return url.startsWith('https://accounts.google.com/') || url.startsWith('https://accounts.youtube.com/')
 }

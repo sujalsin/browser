@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { brandHeader, chromeUserAgent, chromiumBrands, firefoxUserAgent, isGoogleSignIn, sendsClientHints } from './identity'
+import { brandHeader, chromeUserAgent, chromiumBrands, isGoogleSignIn, sendsClientHints } from './identity'
 
 describe('brand list', () => {
   it('is what this Chromium reports on its own (seen in its requests)', () => {
@@ -48,20 +48,14 @@ describe('client hints', () => {
 })
 
 describe('Google sign-in', () => {
-  it('means the sign-in host only', () => {
+  it('means the sign-in hosts only', () => {
     expect(isGoogleSignIn('https://accounts.google.com/v3/signin/identifier?continue=x')).toBe(true)
     expect(isGoogleSignIn('https://accounts.google.com/')).toBe(true)
+    expect(isGoogleSignIn('https://accounts.youtube.com/accounts/SetSID')).toBe(true)
     expect(isGoogleSignIn('https://www.google.com/search?q=accounts.google.com')).toBe(false)
     expect(isGoogleSignIn('https://mail.google.com/')).toBe(false)
+    expect(isGoogleSignIn('https://www.youtube.com/')).toBe(false)
     expect(isGoogleSignIn('https://accounts.google.com.evil.example/')).toBe(false)
     expect(isGoogleSignIn('http://accounts.google.com/')).toBe(false)
-  })
-
-  it('uses a Firefox user agent with a version that fits the date', () => {
-    // Firefox 133 was released on 26 November 2024, 145 on 11 November 2025.
-    expect(firefoxUserAgent('darwin', Date.UTC(2024, 11, 5))).toBe('Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/133.0')
-    expect(firefoxUserAgent('darwin', Date.UTC(2025, 10, 20))).toContain('Firefox/145.0')
-    expect(firefoxUserAgent('linux', Date.UTC(2025, 10, 20))).toContain('X11; Linux x86_64')
-    expect(firefoxUserAgent('win32', Date.UTC(2025, 10, 20))).toContain('Windows NT 10.0; Win64; x64')
   })
 })

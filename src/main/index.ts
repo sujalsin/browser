@@ -16,9 +16,11 @@ import { flushState, loadState } from './store'
 
 app.setName('Browser')
 
-// Sites (notably Google sign-in) refuse browsers whose user agent mentions
-// Electron or an unknown product. Present a plain Chrome user agent.
-app.userAgentFallback = chromeUserAgent(app.userAgentFallback)
+// Some sites turn away a browser whose user agent names a product they don't
+// know, so pages get a plain Chrome-style one. Google's sign-in is the reverse:
+// it wants the unedited one (see shared/identity.ts), so keep that too.
+const OWN_USER_AGENT = app.userAgentFallback
+app.userAgentFallback = chromeUserAgent(OWN_USER_AGENT)
 
 let shell: BrowserShell | null = null
 let db: BrowserDB | null = null
@@ -77,7 +79,7 @@ function uniquePath(dir: string, filename: string): string {
 function setupSession(partition: string, downloads: Downloads, isPrivate: boolean) {
   const ses = session.fromPartition(partition)
   ses.setUserAgent(app.userAgentFallback)
-  attachIdentityHeaders(ses)
+  attachIdentityHeaders(ses, OWN_USER_AGENT)
   installPermissionHandlers(ses, partition, !isPrivate)
   ses.setSpellCheckerLanguages(['en-US'])
   // Save downloads straight to ~/Downloads, like other browsers.
@@ -147,7 +149,7 @@ async function start() {
   // One-time setup per profile (session partition); several spaces can share one.
   const prepared = new Map<string, Promise<void>>()
   // The interface's own session: it fetches the site icons shown in the sidebar.
-  attachIdentityHeaders(session.defaultSession)
+  attachIdentityHeaders(session.defaultSession, OWN_USER_AGENT)
 
   const prepareSession = (partition: string, opts: { private?: boolean } = {}): Promise<void> => {
     let ready = prepared.get(partition)
