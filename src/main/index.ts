@@ -1,4 +1,4 @@
-import { app, ipcMain, nativeTheme, session } from 'electron'
+import { app, components, ipcMain, nativeTheme, session } from 'electron'
 import { existsSync } from 'node:fs'
 import { join, parse } from 'node:path'
 import { ElectronChromeExtensions } from 'electron-chrome-extensions'
@@ -85,6 +85,22 @@ function setupSession(partition: string, downloads: Downloads) {
     downloads.track(item, path)
     item.once('done', () => reservedPaths.delete(path))
   })
+}
+
+/**
+ * Widevine (the copy-protection module Netflix, Spotify, Disney+ … require).
+ * This Electron build installs and updates it through Chromium's component
+ * updater. Installed copies are ready almost instantly; a first-time download
+ * continues in the background, so startup never waits longer than `maxWaitMs`.
+ */
+function widevineReady(maxWaitMs: number): Promise<void> {
+  // `components` only exists in the Widevine-enabled Electron build.
+  if (!components) return Promise.resolve()
+  const ready = components
+    .whenReady()
+    .then(() => undefined)
+    .catch((err: unknown) => console.warn('Widevine is not available yet (protected video will not play):', err))
+  return Promise.race([ready, new Promise<void>((resolve) => setTimeout(resolve, maxWaitMs))])
 }
 
 const H264_PRELOAD_ID = 'prefer-h264'
@@ -182,7 +198,7 @@ async function start() {
   installMenu(() => shell)
 
   // Load extensions and the cached ad-block engine in parallel, before any page loads.
-  await Promise.all([shields.init().catch((err) => console.error('Shields init failed:', err)), ...startupSessions])
+  await Promise.all([shields.init().catch((err) => console.error('Shields init failed:', err)), widevineReady(3000), ...startupSessions])
 
   if (!shell) return
   shell.restoreActiveTab()

@@ -361,6 +361,8 @@ export interface AppInfo {
   isDefaultBrowser: boolean
   arcFound: boolean
   historyCount: number
+  /** Widevine version if protected video (Netflix, Spotify…) can play, else null. */
+  widevine: string | null
 }
 
 export const IPC = {

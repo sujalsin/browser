@@ -1,4 +1,4 @@
-import { BrowserWindow, Menu, WebContentsView, app, clipboard, dialog, nativeTheme, session, shell as electronShell, type WebContents } from 'electron'
+import { BrowserWindow, Menu, WebContentsView, app, clipboard, components, dialog, nativeTheme, session, shell as electronShell, type WebContents } from 'electron'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { homedir, totalmem } from 'node:os'
@@ -2020,6 +2020,7 @@ export class BrowserShell {
           isDefaultBrowser: app.isDefaultProtocolClient('https'),
           arcFound: existsSync(ARC_SIDEBAR_FILE),
           historyCount: this.db?.historyCount() ?? 0,
+          widevine: widevineVersion(),
         }
         return info
       }
@@ -2186,4 +2187,14 @@ function isWebUrl(url: string): boolean {
 function stripHash(url: string): string {
   const i = url.indexOf('#')
   return i < 0 ? url : url.slice(0, i)
+}
+
+/** Installed Widevine version, or null if it isn't ready (or this isn't the Widevine-enabled Electron build). */
+function widevineVersion(): string | null {
+  try {
+    const status = components?.status()?.[components.WIDEVINE_CDM_ID]
+    return status?.version && status.status !== 'error' ? status.version : null
+  } catch {
+    return null
+  }
 }

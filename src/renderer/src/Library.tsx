@@ -547,7 +547,8 @@ function SettingsView({ state }: { state: UIState }) {
 
         {info && (
           <p className="set-about">
-            Browser {info.version} · Chromium {info.chrome} · Electron {info.electron}
+            Browser {info.version} · Chromium {info.chrome} · Electron {info.electron} ·{' '}
+            {info.widevine ? `Protected video (Widevine ${info.widevine}) ready` : 'Protected video (Netflix, Spotify) not available yet'}
           </p>
         )}
       </div>

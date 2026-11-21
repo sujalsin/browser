@@ -7,6 +7,9 @@ files:
   - out/**
   - package.json
 npmRebuild: false
+# Package the Widevine-enabled Electron build (same one npm installs), for any Mac architecture.
+electronDownload:
+  mirror: https://github.com/castlabs/electron-releases/releases/download/
 afterPack: build/after-pack.cjs
 protocols:
   - name: Web URL
