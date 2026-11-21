@@ -1,10 +1,11 @@
 import { ElectronBlocker } from '@ghostery/adblocker-electron'
-import { app, ipcMain, net, type Session } from 'electron'
+import { app, ipcMain, net, type IpcMainInvokeEvent, type Session } from 'electron'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
-import { getDomain } from 'tldts-experimental'
+import { getDomain, parse } from 'tldts-experimental'
 import { isHttpsFailure, isUpgradeable, stripTrackingParams, toHttp, toHttps } from '../shared/privacy'
+import { isolateScriptlets } from '../shared/scriptlets'
 import type { ShieldsSettings, ShieldsStatus } from '../shared/types'
 import createWorker from './shields-worker?nodeWorker'
 
@@ -38,6 +39,14 @@ const FIRST_REFRESH_DELAY_MS = 20_000
 const COSMETIC_CHANNEL = '@ghostery/adblocker/inject-cosmetic-filters'
 const MUTATION_CHANNEL = '@ghostery/adblocker/is-mutation-observer-enabled'
 
+/** What the in-page script reports as the page changes: names seen in the DOM. */
+interface DomFeatures {
+  classes?: string[]
+  hrefs?: string[]
+  ids?: string[]
+  lifecycle?: 'start' | 'dom-update'
+}
+
 interface CacheMeta {
   updatedAt: number
   listsKey: string
@@ -65,9 +74,13 @@ export class Shields {
   onBlocked: (webContentsId: number) => void = () => {}
 
   constructor(private getSettings: () => ShieldsSettings) {
-    ipcMain.handle(COSMETIC_CHANNEL, (event, url: string, msg?: unknown) => {
-      if (!this.engine || !this.activeFor(event.sender.getURL())) return
-      return this.engine.onInjectCosmeticFilters(event, url, msg as never)
+    ipcMain.handle(COSMETIC_CHANNEL, (event, url: string, msg?: DomFeatures) => {
+      // `url` is the address of the document that is asking. A new tab's blank
+      // starting document asks too, and what it was given used to land in the site
+      // that loads next, even with Shields off for that site: only answer web pages,
+      // and decide by the document's own address rather than the tab's.
+      if (!this.engine || !/^https?:/.test(url) || !this.activeFor(url)) return
+      this.injectCosmetics(this.engine, event, url, msg)
     })
     ipcMain.handle(MUTATION_CHANNEL, (event) => (this.engine ? this.engine.onIsMutationObserverEnabled(event) : false))
   }
@@ -156,6 +169,41 @@ export class Shields {
     if (prev.blockCookieBanners !== next.blockCookieBanners) {
       if (!(await this.loadCached())) await this.refresh()
     }
+  }
+
+  // ───────────────────────────── in-page blocking ─────────────────────────────
+
+  /**
+   * Hide ad elements (CSS) and run the page's scriptlets. Asked for by the
+   * in-page script: once as the page starts, then again as its DOM grows.
+   *
+   * This replaces the engine's own `onInjectCosmeticFilters`, which runs the
+   * scriptlets one by one in the page's global scope (see isolateScriptlets for
+   * how that breaks pages), only once the page has finished loading (too late
+   * for a scriptlet meant to get in before the site's code), and while
+   * pretending the user just clicked.
+   */
+  private injectCosmetics(engine: ElectronBlocker, event: IpcMainInvokeEvent, url: string, msg?: DomFeatures) {
+    const { hostname, domain } = parse(url)
+    const firstRun = msg === undefined
+    const { active, styles, scripts } = engine.getCosmeticsFilters({
+      domain: domain ?? '',
+      hostname: hostname ?? '',
+      url,
+      classes: msg?.classes,
+      hrefs: msg?.hrefs,
+      ids: msg?.ids,
+      getBaseRules: firstRun,
+      getInjectionRules: firstRun,
+      getExtendedRules: false,
+      getRulesFromHostname: firstRun,
+      getRulesFromDOM: !firstRun,
+      callerContext: { frameId: event.frameId, processId: event.processId, lifecycle: msg?.lifecycle },
+    })
+    if (!active) return
+    if (styles.length > 0) void event.sender.insertCSS(styles, { cssOrigin: 'user' }).catch(() => {})
+    // Straight into the frame that asked: webContents.executeJavaScript would wait for the page to finish loading.
+    if (scripts.length > 0) void event.senderFrame?.executeJavaScript(isolateScriptlets(scripts)).catch(() => {})
   }
 
   // ───────────────────────────── per-site state ─────────────────────────────
