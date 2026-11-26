@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react'
-import { SIDEBAR_TOP_HEIGHT, SIDEBAR_WIDTH, VIEW_GAP, pageFrame } from '../../shared/constants'
+import { SIDEBAR_TOP_HEIGHT, SIDEBAR_WIDTH, pageFrame } from '../../shared/constants'
 import type { TabRuntime, UIState } from '../../shared/types'
 import { displayHost } from '../../shared/url'
 import { Icon } from './Icon'
@@ -20,11 +20,9 @@ export function themeStyle(state: UIState): CSSProperties {
   const style: Record<string, string> = {
     '--space': space.color,
     '--sidebar-width': `${SIDEBAR_WIDTH}px`,
-    // The frame around the page (none in full screen)…
+    // The frame around the page (none in full screen, where everything reaches the screen's edges).
     '--gap': `${frame.gap}px`,
     '--radius-page': `${frame.radius}px`,
-    // …and how far floating panels sit in from the window's edge (always).
-    '--float': `${VIEW_GAP}px`,
     '--top': `${SIDEBAR_TOP_HEIGHT}px`,
   }
   // A second color turns the frame into a gradient, like Arc's space themes (see .gradient in the styles).

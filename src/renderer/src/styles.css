@@ -1415,10 +1415,10 @@ kbd {
 
 .peek-panel {
   position: absolute;
-  top: var(--float);
-  left: var(--float);
-  bottom: var(--float);
-  width: calc(var(--sidebar-width) - var(--float));
+  top: var(--gap);
+  left: var(--gap);
+  bottom: var(--gap);
+  width: calc(var(--sidebar-width) - var(--gap));
   border-radius: 14px;
   background: var(--frame-bg);
   box-shadow: var(--shadow-float);
@@ -1429,6 +1429,15 @@ kbd {
 .peek-panel .sidebar {
   width: 100%;
   padding-left: 8px;
+}
+
+/* Full screen has no frame: the sidebar that slides in sits against the screen's edges, top to bottom. */
+.fullscreen .peek-panel {
+  border-radius: 0;
+}
+
+.fullscreen .peek-panel .sidebar {
+  padding-left: 10px;
 }
 
 @keyframes peek-in {
