@@ -1,11 +1,10 @@
 import { ElectronBlocker } from '@ghostery/adblocker-electron'
-import { app, ipcMain, net, utilityProcess, type IpcMainEvent, type IpcMainInvokeEvent, type Session } from 'electron'
+import { app, ipcMain, net, utilityProcess, type IpcMainEvent, type IpcMainInvokeEvent, type Session, type WebContents } from 'electron'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { getDomain, parse } from 'tldts-experimental'
 import { isHttpsFailure, isUpgradeable, stripTrackingParams, toHttp, toHttps } from '../shared/privacy'
-import { SCRIPTLETS_CHANNEL, isolateScriptlets } from '../shared/scriptlets'
+import { SCRIPTLETS_CHANNEL, SCRIPTLETS_LATER_CHANNEL, isolateScriptlets } from '../shared/scriptlets'
 import type { ShieldsSettings, ShieldsStatus } from '../shared/types'
 import type { BuildInput, BuildOutput } from './shields-worker'
 import builderPath from './shields-worker?modulePath'
@@ -89,7 +88,6 @@ export class Shields {
   /** Hosts where https failed: always use http this session. */
   private httpOnly = new Set<string>()
   private refreshTimer: NodeJS.Timeout | null = null
-  private preloadPath = createRequire(__filename).resolve('@ghostery/adblocker-electron-preload')
 
   /** Called when the status changes or something was blocked (webContents id). */
   onStatus: () => void = () => {}
@@ -108,6 +106,8 @@ export class Shields {
     ipcMain.on(SCRIPTLETS_CHANNEL, (event, url: string) => {
       event.returnValue = this.scriptletsFor(event, url)
     })
+    // Frames inside a page ask the same thing without waiting.
+    ipcMain.handle(SCRIPTLETS_LATER_CHANNEL, (event, url: string) => this.scriptletsFor(event, url))
     ipcMain.handle(MUTATION_CHANNEL, (event) => (this.engine ? this.engine.onIsMutationObserverEnabled(event) : false))
   }
 
@@ -215,8 +215,19 @@ export class Shields {
       getRulesFromDOM: !firstRun,
       callerContext: { frameId: event.frameId, processId: event.processId, lifecycle: msg?.lifecycle },
     })
-    if (active && styles.length > 0) void event.sender.insertCSS(styles, { cssOrigin: 'user' }).catch(() => {})
+    if (!active || styles.length === 0) return
+    // A page that keeps changing asks again and again, and is mostly given the
+    // same rules. Each style sheet goes into a page once: otherwise a feed left
+    // open for hours collects tens of thousands of identical ones.
+    let inserted = this.insertedCss.get(event.sender)
+    if (firstRun || !inserted) this.insertedCss.set(event.sender, (inserted = new Set())) // a new page starts clean
+    if (inserted.has(styles)) return
+    inserted.add(styles)
+    void event.sender.insertCSS(styles, { cssOrigin: 'user' }).catch(() => {})
   }
+
+  /** Style sheets already put into each tab's current page. */
+  private insertedCss = new WeakMap<WebContents, Set<string>>()
 
   /**
    * The scriptlets for a page or frame at `url`, as one script ('' for none).
@@ -226,7 +237,7 @@ export class Shields {
    * late for most of them, in the page's global scope, where they break each
    * other (see isolateScriptlets), and while pretending the user just clicked.
    */
-  private scriptletsFor(event: IpcMainEvent, url: string): string {
+  private scriptletsFor(event: IpcMainEvent | IpcMainInvokeEvent, url: string): string {
     const engine = this.engine
     if (!engine || !/^https?:/.test(url)) return ''
     // A frame inside a page follows that page's setting. The page itself goes by
@@ -322,7 +333,6 @@ export class Shields {
   attach(ses: Session) {
     if (this.sessions.has(ses)) return
     this.sessions.add(ses)
-    ses.registerPreloadScript({ id: 'shields-cosmetics', type: 'frame', filePath: this.preloadPath })
 
     ses.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, callback) => {
       if (details.resourceType === 'mainFrame') return callback(this.topLevel(details))

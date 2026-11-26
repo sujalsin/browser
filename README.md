@@ -204,6 +204,9 @@ They are compiled on a background thread and cached, so they don't slow down sta
   Background tabs draw no frames and their timers are slowed, as in Chrome.
 - **Filter lists update in a process of their own**, once a day, which exits when done. Building
   the engine needs a couple of hundred megabytes for a few seconds; none of it stays with the browser.
+- **Embedded frames start cheaply.** Each frame in a page runs one small start-up script and does
+  not wait on the browser for it (under a millisecond per frame, measured; it was 4.6 ms).
+- **No build-up on busy pages.** A hiding rule goes into a page once, however often the page changes.
 - **Animations move, they don't resize.** The sidebar slide changes the page's size once, not on
   every frame, and all motion is skipped if macOS is set to reduce motion.
 

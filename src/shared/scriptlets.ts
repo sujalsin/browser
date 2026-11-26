@@ -4,6 +4,8 @@
 
 /** A page asks (and waits) for its scriptlets as it starts. Answer: one script, or ''. */
 export const SCRIPTLETS_CHANNEL = 'shields:scriptlets'
+/** The same question from a frame inside a page, which doesn't wait for the answer. */
+export const SCRIPTLETS_LATER_CHANNEL = 'shields:scriptlets-later'
 
 /**
  * Combine a page's scriptlets into one script, each in a scope of its own.
