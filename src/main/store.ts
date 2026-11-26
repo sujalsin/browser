@@ -37,6 +37,7 @@ function defaultState(): PersistedState {
       littleArcForLinks: true,
       translateTo: targetFromLocale(app.getLocale() || 'en'),
       autoPip: true,
+      savePasswords: true,
     },
     shields: {
       enabled: true,

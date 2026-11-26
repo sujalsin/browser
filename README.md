@@ -213,6 +213,26 @@ They are compiled on a background thread and cached, so they don't slow down sta
 chooser of its own; this browser can't, so that mechanism is switched off and sites fall back to
 the window.) Google's one-tap prompt in the corner of a page may not appear.
 
+## Passwords
+
+The browser can keep passwords itself, separately from Bitwarden (for example personal ones, with
+work ones in Bitwarden). They are stored on this Mac only, encrypted with a key macOS keeps in your
+keychain, and never synced anywhere.
+
+- **Saving:** sign in to a site and the browser asks whether to save the password (Save / Not Now /
+  Never for This Site). Private windows never ask. Turn the question off in Settings → Privacy.
+- **Filling in:** click into a sign-in field on a site with a saved password and a menu offers the
+  accounts. Nothing is put into the page until you choose one, and a password is only ever offered
+  on the exact site it was saved for.
+- **Managing:** Library → Passwords: search, show, copy, delete. Show and Copy ask for Touch ID on
+  Macs that have it; a copied password is cleared from the clipboard after a minute.
+- **Import from Arc (or Chrome):** in Arc open `arc://password-manager/settings` → *Export
+  passwords*, then Library → Passwords → *Import…* and pick that file. Let the browser move the file
+  to the Trash afterwards: it holds every password as plain text.
+
+Because the app is built on your own Mac without an Apple developer certificate, macOS may ask
+again for permission to use the keychain item after you install a new build. Choose Always Allow.
+
 ## Passkeys
 
 Signing in with a passkey that lives in iCloud Keychain, on your phone, or in Chrome does not work

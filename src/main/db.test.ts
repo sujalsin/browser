@@ -126,3 +126,49 @@ describe('downloads and permissions', () => {
     expect(d.listPermissions()).toHaveLength(1)
   })
 })
+
+describe('saved logins', () => {
+  const secret = (text: string) => new TextEncoder().encode(text)
+
+  it('saves, lists without the password, and returns the stored blob', () => {
+    const db = new BrowserDB(':memory:')
+    const id = db.saveLogin('https://a.example', 'me', secret('enc-1'), 100)
+    expect(db.loginsFor('https://a.example')).toEqual([{ id, origin: 'https://a.example', username: 'me', used: 100 }])
+    expect(db.loginsFor('https://b.example')).toEqual([])
+    expect(Object.keys(db.listLogins()[0])).not.toContain('secret')
+    expect(new TextDecoder().decode(db.loginSecret(id)!)).toBe('enc-1')
+    expect(db.loginSecret(999)).toBeNull()
+  })
+
+  it('replaces the password for the same site and user name, keeping one entry', () => {
+    const db = new BrowserDB(':memory:')
+    const first = db.saveLogin('https://a.example', 'me', secret('old'), 100)
+    const second = db.saveLogin('https://a.example', 'me', secret('new'), 200)
+    expect(second).toBe(first)
+    expect(db.listLogins()).toHaveLength(1)
+    expect(new TextDecoder().decode(db.loginSecret(first)!)).toBe('new')
+    expect(db.listLogins()[0].used).toBe(200)
+  })
+
+  it('keeps several accounts per site, most recently used first', () => {
+    const db = new BrowserDB(':memory:')
+    const a = db.saveLogin('https://a.example', 'work', secret('1'), 100)
+    const b = db.saveLogin('https://a.example', 'home', secret('2'), 200)
+    expect(db.loginsFor('https://a.example').map((l) => l.username)).toEqual(['home', 'work'])
+    db.touchLogin(a, 300)
+    expect(db.loginsFor('https://a.example').map((l) => l.username)).toEqual(['work', 'home'])
+    db.deleteLogin(b)
+    expect(db.listLogins().map((l) => l.id)).toEqual([a])
+  })
+
+  it('remembers the sites never to save for', () => {
+    const db = new BrowserDB(':memory:')
+    expect(db.isNeverSave('https://a.example')).toBe(false)
+    db.setNeverSave('https://a.example', true)
+    db.setNeverSave('https://a.example', true)
+    expect(db.isNeverSave('https://a.example')).toBe(true)
+    expect(db.listNeverSave()).toEqual(['https://a.example'])
+    db.setNeverSave('https://a.example', false)
+    expect(db.isNeverSave('https://a.example')).toBe(false)
+  })
+})

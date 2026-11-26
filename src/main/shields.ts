@@ -323,7 +323,6 @@ export class Shields {
     if (this.sessions.has(ses)) return
     this.sessions.add(ses)
     ses.registerPreloadScript({ id: 'shields-cosmetics', type: 'frame', filePath: this.preloadPath })
-    ses.registerPreloadScript({ id: 'shields-scriptlets', type: 'frame', filePath: join(__dirname, '../preload/shields.js') })
 
     ses.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, callback) => {
       if (details.resourceType === 'mainFrame') return callback(this.topLevel(details))

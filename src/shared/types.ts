@@ -205,6 +205,8 @@ export interface Settings {
   translateTo: string
   /** Playing video pops out into picture-in-picture when you switch to another tab. */
   autoPip: boolean
+  /** Offer to save passwords you type into sign-in forms. */
+  savePasswords: boolean
 }
 
 /** What the UI receives. */
@@ -240,6 +242,8 @@ export interface UIState extends PersistedState {
   auth: { host: string; realm: string; isProxy: boolean } | null
   /** Where the link under the pointer goes (shown in the address pill). */
   hoverUrl: string
+  /** Goes up whenever the saved passwords change. */
+  loginsRev: number
 }
 
 /** One row in the Task Manager. */
@@ -277,7 +281,26 @@ export interface LittleState {
   popup: boolean
 }
 
-export type LibraryTab = 'history' | 'downloads' | 'settings' | 'boosts' | 'tasks'
+export type LibraryTab = 'history' | 'downloads' | 'passwords' | 'settings' | 'boosts' | 'tasks'
+
+/** A saved login as lists show it: never with its password. */
+export interface LoginInfo {
+  id: number
+  /** The site it is for, e.g. "https://accounts.example.com". */
+  origin: string
+  username: string
+  /** When it was last filled in or saved. */
+  used: number
+}
+
+/** What the Passwords screen shows. */
+export interface LoginsOverview {
+  /** False when this computer offers no way to encrypt them: nothing is saved then. */
+  available: boolean
+  logins: LoginInfo[]
+  /** Sites you chose "Never" for. */
+  never: string[]
+}
 
 export interface FindState {
   query: string
@@ -348,6 +371,10 @@ export type Action =
   | { type: 'space.update'; id: string; color?: string; gradient?: string | null }
   | { type: 'little.open'; url?: string }
   | { type: 'little.ready' }
+  | { type: 'logins.copy'; id: number }
+  | { type: 'logins.delete'; id: number }
+  | { type: 'logins.allowSaving'; origin: string }
+  | { type: 'logins.import' }
   | { type: 'little.navigate'; input: string }
   | { type: 'little.back' }
   | { type: 'little.forward' }
@@ -377,6 +404,9 @@ export type Query =
   | { type: 'permissions.list' }
   | { type: 'app.info' }
   | { type: 'tasks.list' }
+  | { type: 'logins.list' }
+  /** The password itself, after the Mac's owner has confirmed (Touch ID where there is one). */
+  | { type: 'logins.reveal'; id: number }
 
 export interface AppInfo {
   version: string

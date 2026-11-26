@@ -106,6 +106,12 @@ export class LittleWindow {
     return this.view.webContents
   }
 
+  /** Where the page's top-left corner is inside this window. */
+  pageOffset(): { x: number; y: number } {
+    const { x, y } = this.view.getBounds()
+    return { x, y }
+  }
+
   isUI(wc: WebContents) {
     return wc === this.win.webContents
   }

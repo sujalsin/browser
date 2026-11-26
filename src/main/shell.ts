@@ -56,6 +56,7 @@ import type { BrowserDB } from './db'
 import type { Downloads } from './downloads'
 import { forgetPartitionPermissions, forgetPermission } from './permissions'
 import { pagePreferences } from './page-prefs'
+import type { Passwords } from './passwords'
 import { WINDOW_BUTTONS, windowButtons } from '../shared/window-buttons'
 import { LittleWindow } from './little'
 import { Shields } from './shields'
@@ -154,6 +155,31 @@ export class BrowserShell {
   }
 
   /** Wire Shields events (blocked counts, list status) into this window's UI. */
+  passwords: Passwords | null = null
+  /** Goes up whenever the saved passwords change, so the Passwords screen knows to ask again. */
+  private loginsRev = 0
+
+  attachPasswords(passwords: Passwords) {
+    this.passwords = passwords
+    passwords.onChange = () => {
+      this.loginsRev++
+      this.emit(false)
+    }
+    passwords.host = {
+      offersToSave: () => this.state.settings.savePasswords,
+      showPasswords: () => this.openLibrary('passwords'),
+      locate: (wc) => {
+        const tabId = this.tabIdForWebContents(wc)
+        const view = tabId ? this.views.get(tabId) : this.previewView?.webContents === wc ? this.previewView : undefined
+        if (view) return { window: this.win, x: view.getBounds().x, y: view.getBounds().y }
+        for (const little of this.littles) {
+          if (little.pageWebContents === wc) return { window: little.win, ...little.pageOffset() }
+        }
+        return null
+      },
+    }
+  }
+
   attachShields(shields: Shields) {
     this.shields = shields
     shields.onStatus = () => this.emit(false)
@@ -300,6 +326,7 @@ export class BrowserShell {
       splitDragging: this.splitDragging,
       auth: this.authQueue[0] ? { host: this.authQueue[0].host, realm: this.authQueue[0].realm, isProxy: this.authQueue[0].isProxy } : null,
       hoverUrl: this.hoverUrl,
+      loginsRev: this.loginsRev,
     }
   }
 
@@ -2200,6 +2227,7 @@ export class BrowserShell {
     if (patch.appearance === 'system' || patch.appearance === 'light' || patch.appearance === 'dark') clean.appearance = patch.appearance
     if (typeof patch.translateTo === 'string' && patch.translateTo in LANGUAGES) clean.translateTo = patch.translateTo
     if (typeof patch.autoPip === 'boolean') clean.autoPip = patch.autoPip
+    if (typeof patch.savePasswords === 'boolean') clean.savePasswords = patch.savePasswords
     if (Object.keys(clean).length) this.updateSettings(clean)
   }
 
@@ -2330,6 +2358,10 @@ export class BrowserShell {
         return this.db?.listPermissions() ?? []
       case 'tasks.list':
         return this.tasks()
+      case 'logins.list':
+        return this.passwords?.overview() ?? { available: false, logins: [], never: [] }
+      case 'logins.reveal':
+        return this.passwords?.reveal(Number(q.id)) ?? null
       case 'app.info': {
         const info: AppInfo = {
           version: app.getVersion(),
@@ -2435,7 +2467,15 @@ export class BrowserShell {
       case 'tabs.tidy':
         return this.tidy()
       case 'library.open':
-        return this.openLibrary(['history', 'downloads', 'settings', 'boosts', 'tasks'].includes(action.tab) ? action.tab : 'history')
+        return this.openLibrary(['history', 'downloads', 'passwords', 'settings', 'boosts', 'tasks'].includes(action.tab) ? action.tab : 'history')
+      case 'logins.copy':
+        return void this.passwords?.copy(Number(action.id))
+      case 'logins.delete':
+        return this.passwords?.delete(Number(action.id))
+      case 'logins.allowSaving':
+        return this.passwords?.allowSaving(String(action.origin))
+      case 'logins.import':
+        return void this.passwords?.importFromFile(this.win)
       case 'library.close':
         return this.closeLibrary()
       case 'download.act':

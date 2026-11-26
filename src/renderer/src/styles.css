@@ -1822,6 +1822,81 @@ kbd {
   opacity: 1;
 }
 
+/* passwords */
+
+.pw-row {
+  gap: 12px;
+}
+
+.pw-site {
+  width: 30%;
+  flex-shrink: 0;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pw-user {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pw-secret {
+  width: 132px;
+  flex-shrink: 0;
+  color: var(--text-faint);
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pw-secret.shown {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 12px;
+  letter-spacing: 0;
+  color: var(--text);
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.pw-empty {
+  max-width: 520px;
+  margin: 36px auto;
+  color: var(--text-dim);
+  line-height: 1.55;
+}
+
+.pw-empty h3 {
+  margin: 22px 0 6px;
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.pw-empty ol {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.pw-empty li {
+  margin-bottom: 6px;
+}
+
+.pw-empty code {
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--hover);
+  font-size: 12px;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 /* downloads */
 
 .lib-row.download {

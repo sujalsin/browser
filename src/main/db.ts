@@ -1,10 +1,10 @@
-// One SQLite file for history, downloads and site permissions. Uses Node's
+// One SQLite file for history, downloads, site permissions and saved logins
+// (whose passwords arrive here already encrypted). Uses Node's
 // built-in node:sqlite (bundled with Electron), so there is no native module to
 // build for Intel vs Apple Silicon. No Electron imports: unit-tested directly.
 import { DatabaseSync } from 'node:sqlite'
-import type { DownloadInfo, HistoryItem, SitePermission } from '../shared/types'
+import type { DownloadInfo, HistoryItem, LoginInfo, SitePermission } from '../shared/types'
 
-const SCHEMA_VERSION = 1
 const DAY = 86_400_000
 
 export class BrowserDB {
@@ -16,6 +16,24 @@ export class BrowserDB {
     this.db.exec('PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;')
     const version = (this.db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version
     if (version < 1) this.createV1()
+    if (version < 2) this.createV2()
+  }
+
+  /** Saved logins. `secret` is the password as encrypted by the caller; this file never sees it in the clear. */
+  private createV2() {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS logins (
+        id INTEGER PRIMARY KEY,
+        origin TEXT NOT NULL,
+        username TEXT NOT NULL,
+        secret BLOB NOT NULL,
+        created INTEGER NOT NULL,
+        used INTEGER NOT NULL,
+        UNIQUE (origin, username)
+      );
+      CREATE TABLE IF NOT EXISTS logins_never (origin TEXT PRIMARY KEY);
+      PRAGMA user_version = 2;
+    `)
   }
 
   private createV1() {
@@ -64,7 +82,7 @@ export class BrowserDB {
         updated INTEGER NOT NULL,
         PRIMARY KEY (partition, origin, permission)
       );
-      PRAGMA user_version = ${SCHEMA_VERSION};
+      PRAGMA user_version = 1;
     `)
   }
 
@@ -268,5 +286,57 @@ export class BrowserDB {
 
   deletePermission(partition: string, origin: string, permission: string) {
     this.db.prepare('DELETE FROM permissions WHERE partition = ? AND origin = ? AND permission = ?').run(partition, origin, permission)
+  }
+
+  // ───────────────────────────── saved logins ─────────────────────────────
+
+  /** Add a login, or replace the password of the one already saved for this site and user name. Returns its id. */
+  saveLogin(origin: string, username: string, secret: Uint8Array, now = Date.now()): number {
+    const row = this.db
+      .prepare(
+        `INSERT INTO logins (origin, username, secret, created, used) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (origin, username) DO UPDATE SET secret = excluded.secret, used = excluded.used
+         RETURNING id`,
+      )
+      .get(origin, username, secret, now, now) as { id: number }
+    return row.id
+  }
+
+  /** Logins saved for a site, most recently used first. Without the passwords. */
+  loginsFor(origin: string): LoginInfo[] {
+    return this.db.prepare('SELECT id, origin, username, used FROM logins WHERE origin = ? ORDER BY used DESC, id DESC').all(origin) as unknown as LoginInfo[]
+  }
+
+  /** Every saved login, by site. Without the passwords. */
+  listLogins(): LoginInfo[] {
+    return this.db.prepare('SELECT id, origin, username, used FROM logins ORDER BY origin, username').all() as unknown as LoginInfo[]
+  }
+
+  /** The encrypted password of one login. */
+  loginSecret(id: number): Uint8Array | null {
+    const row = this.db.prepare('SELECT secret FROM logins WHERE id = ?').get(id) as { secret: Uint8Array } | undefined
+    return row?.secret ?? null
+  }
+
+  touchLogin(id: number, now = Date.now()) {
+    this.db.prepare('UPDATE logins SET used = ? WHERE id = ?').run(now, id)
+  }
+
+  deleteLogin(id: number) {
+    this.db.prepare('DELETE FROM logins WHERE id = ?').run(id)
+  }
+
+  /** "Never for this site": don't offer to save passwords there again. */
+  setNeverSave(origin: string, never: boolean) {
+    if (never) this.db.prepare('INSERT OR IGNORE INTO logins_never (origin) VALUES (?)').run(origin)
+    else this.db.prepare('DELETE FROM logins_never WHERE origin = ?').run(origin)
+  }
+
+  isNeverSave(origin: string): boolean {
+    return !!this.db.prepare('SELECT 1 FROM logins_never WHERE origin = ?').get(origin)
+  }
+
+  listNeverSave(): string[] {
+    return (this.db.prepare('SELECT origin FROM logins_never ORDER BY origin').all() as { origin: string }[]).map((r) => r.origin)
   }
 }

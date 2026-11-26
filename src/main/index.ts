@@ -8,6 +8,7 @@ import { attachIdentityHeaders } from './identity'
 import { setupExtensions } from './extensions'
 import { installMenu } from './menu'
 import { Downloads } from './downloads'
+import { Passwords } from './passwords'
 import { installPermissionHandlers, loadPermissions } from './permissions'
 import { BrowserDB } from './db'
 import { BrowserShell } from './shell'
@@ -91,6 +92,8 @@ function setupSession(partition: string, downloads: Downloads, isPrivate: boolea
   const ses = session.fromPartition(partition)
   ses.setUserAgent(app.userAgentFallback)
   attachIdentityHeaders(ses, OWN_USER_AGENT)
+  // Our script at the start of every page and frame: Shields' scriptlets, saved passwords.
+  ses.registerPreloadScript({ id: 'page-start', type: 'frame', filePath: join(__dirname, '../preload/page.js') })
   installPermissionHandlers(ses, partition, !isPrivate)
   ses.setSpellCheckerLanguages(['en-US'])
   // Save downloads straight to ~/Downloads, like other browsers.
@@ -150,6 +153,7 @@ async function start() {
   const downloads = new Downloads(db)
   downloads.onChange = () => shell?.downloadsChanged()
   downloads.onRetry = (url) => shell?.activeWebContents()?.downloadURL(url)
+  const passwords = new Passwords(db)
 
   // Shields read settings from whichever window state is current.
   const shields = new Shields(() => (shell ? shell.shieldsSettings : state.shields))
@@ -197,6 +201,7 @@ async function start() {
     created.attachShields(shields)
     created.db = db
     created.downloads = downloads
+    created.attachPasswords(passwords)
     created.prepareSession = prepareSession
     created.onSettingsChanged = (settings) => {
       nativeTheme.themeSource = settings.appearance

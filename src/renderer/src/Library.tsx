@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { normalizeDomain } from '../../shared/boosts'
 import { SPACE_COLORS } from '../../shared/constants'
 import { LANGUAGES } from '../../shared/translate'
-import type { AppInfo, Boost, DownloadInfo, HistoryItem, LibraryTab, SearchEngineId, SitePermission, TaskInfo, UIState } from '../../shared/types'
+import type { AppInfo, Boost, DownloadInfo, HistoryItem, LibraryTab, LoginsOverview, SearchEngineId, SitePermission, TaskInfo, UIState } from '../../shared/types'
 import { SEARCH_ENGINES, displayHost } from '../../shared/url'
 import { Favicon } from './Favicon'
 import { Icon, type IconName } from './Icon'
@@ -11,6 +11,7 @@ import { dispatch } from './useBrowserState'
 const TABS: { id: LibraryTab; label: string; icon: IconName; key: string }[] = [
   { id: 'history', label: 'History', icon: 'history', key: '⌘Y' },
   { id: 'downloads', label: 'Downloads', icon: 'download', key: '⇧⌘J' },
+  { id: 'passwords', label: 'Passwords', icon: 'lock', key: '' },
   { id: 'boosts', label: 'Boosts', icon: 'boost', key: '' },
   { id: 'tasks', label: 'Task Manager', icon: 'tasks', key: '' },
   { id: 'settings', label: 'Settings', icon: 'settings', key: '⌘,' },
@@ -48,6 +49,7 @@ export function Library({ state }: { state: UIState }) {
           </button>
           {tab === 'history' && <HistoryView />}
           {tab === 'downloads' && <DownloadsView state={state} />}
+          {tab === 'passwords' && <PasswordsView state={state} />}
           {tab === 'boosts' && <BoostsView state={state} />}
           {tab === 'tasks' && <TasksView state={state} />}
           {tab === 'settings' && <SettingsView state={state} />}
@@ -555,6 +557,14 @@ function SettingsView({ state }: { state: UIState }) {
         </Section>
 
         <Section title="Privacy">
+          <Row label="Offer to save passwords" hint="Saved on this Mac only, encrypted with a key in your keychain. Bitwarden is not affected.">
+            <Toggle label="Offer to save passwords" on={s.savePasswords} onChange={(v) => dispatch({ type: 'settings.update', patch: { savePasswords: v } })} />
+          </Row>
+          <Row label="Saved passwords" hint="See, copy, delete or import them.">
+            <button className="lib-button" onClick={() => dispatch({ type: 'library.open', tab: 'passwords' })}>
+              Open Passwords
+            </button>
+          </Row>
           <Row label="Clear cached files" hint="Images and files saved to load sites faster.">
             <button className="lib-button" onClick={() => dispatch({ type: 'data.clear', what: 'cache' })}>
               Clear Cache…
@@ -577,6 +587,135 @@ function SettingsView({ state }: { state: UIState }) {
             Browser {info.version} · Chromium {info.chrome} · Electron {info.electron} ·{' '}
             {info.widevine ? `Protected video (Widevine ${info.widevine}) ready` : 'Protected video (Netflix, Spotify) not available yet'}
           </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ───────────────────────────── Passwords ─────────────────────────────
+
+/** How long a password you asked to see stays on screen. */
+const SHOW_PASSWORD_MS = 15_000
+
+function PasswordsView({ state }: { state: UIState }) {
+  const [data, setData] = useState<LoginsOverview | null>(null)
+  const [filter, setFilter] = useState('')
+  const [shown, setShown] = useState<{ id: number; password: string } | null>(null)
+  const [copied, setCopied] = useState<number | null>(null)
+
+  // Ask again whenever the saved passwords change (a save, an import, a delete).
+  useEffect(() => {
+    void window.browser.query<LoginsOverview>({ type: 'logins.list' }).then(setData)
+  }, [state.loginsRev])
+  // A password on screen hides itself again.
+  useEffect(() => {
+    if (!shown) return
+    const timer = setTimeout(() => setShown(null), SHOW_PASSWORD_MS)
+    return () => clearTimeout(timer)
+  }, [shown])
+  useEffect(() => {
+    if (copied === null) return
+    const timer = setTimeout(() => setCopied(null), 1500)
+    return () => clearTimeout(timer)
+  }, [copied])
+
+  if (!data) return null
+  const text = filter.trim().toLowerCase()
+  const logins = text ? data.logins.filter((l) => l.origin.toLowerCase().includes(text) || l.username.toLowerCase().includes(text)) : data.logins
+  const host = (origin: string) => origin.replace(/^https?:\/\/(www\.)?/, '')
+
+  const show = async (id: number) => {
+    if (shown?.id === id) return setShown(null)
+    const password = await window.browser.query<string | null>({ type: 'logins.reveal', id })
+    if (password !== null && password !== undefined) setShown({ id, password })
+  }
+
+  return (
+    <div className="lib-page">
+      <header className="lib-header">
+        <h2>Passwords</h2>
+        {data.available && data.logins.length > 0 && (
+          <label className="lib-search">
+            <Icon name="search" size={14} />
+            <input value={filter} placeholder="Search sites and user names" spellCheck={false} onChange={(e) => setFilter(e.target.value)} />
+          </label>
+        )}
+        {data.available && (
+          <button className="lib-button" onClick={() => dispatch({ type: 'logins.import' })}>
+            Import…
+          </button>
+        )}
+      </header>
+      <div className="lib-scroll">
+        {!data.available ? (
+          <p className="lib-empty">Passwords can’t be saved on this computer: there is no keychain to encrypt them with.</p>
+        ) : data.logins.length === 0 ? (
+          <div className="pw-empty">
+            <h3>No saved passwords yet</h3>
+            <p>When you sign in to a site, the browser offers to save the password. It stays on this Mac, encrypted with a key in your keychain.</p>
+            <h3>Bring them over from Arc</h3>
+            <ol>
+              <li>
+                In Arc, open <code>arc://password-manager/settings</code> and choose <b>Export passwords</b>.
+              </li>
+              <li>
+                Here, choose <b>Import…</b> and pick the file Arc saved.
+              </li>
+              <li>Let the browser move that file to the Trash afterwards: it holds every password as plain text.</li>
+            </ol>
+          </div>
+        ) : (
+          <ul className="lib-list">
+            {logins.map((l) => (
+              <li key={l.id} className="lib-row pw-row">
+                <Favicon url={l.origin} />
+                <span className="pw-site" title={l.origin}>
+                  {host(l.origin)}
+                </span>
+                <span className="pw-user" title={l.username}>
+                  {l.username || 'No user name'}
+                </span>
+                <span className={`pw-secret ${shown?.id === l.id ? 'shown' : ''}`}>{shown?.id === l.id ? shown.password : '••••••••'}</span>
+                <button className="lib-button small" onClick={() => void show(l.id)}>
+                  {shown?.id === l.id ? 'Hide' : 'Show'}
+                </button>
+                <button
+                  className="lib-button small"
+                  onClick={() => {
+                    dispatch({ type: 'logins.copy', id: l.id })
+                    setCopied(l.id)
+                  }}
+                >
+                  {copied === l.id ? 'Copied' : 'Copy'}
+                </button>
+                <button
+                  className="icon-btn"
+                  title="Delete this password"
+                  onClick={() => window.confirm(`Delete the saved password for ${l.username || 'this site'} on ${host(l.origin)}?`) && dispatch({ type: 'logins.delete', id: l.id })}
+                >
+                  <Icon name="trash" size={14} />
+                </button>
+              </li>
+            ))}
+            {logins.length === 0 && <p className="lib-empty">Nothing matches “{filter}”.</p>}
+          </ul>
+        )}
+        {data.never.length > 0 && (
+          <section className="lib-group">
+            <h3>Never saved for</h3>
+            <ul className="lib-list">
+              {data.never.map((origin) => (
+                <li key={origin} className="lib-row">
+                  <Favicon url={origin} />
+                  <span className="lib-title">{host(origin)}</span>
+                  <button className="lib-button small" onClick={() => dispatch({ type: 'logins.allowSaving', origin })}>
+                    Offer Again
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
         )}
       </div>
     </div>
