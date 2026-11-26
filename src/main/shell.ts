@@ -4,7 +4,7 @@ import { dirname } from 'node:path'
 import { homedir, totalmem } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
-import { SIDEBAR_TOP_HEIGHT, SIDEBAR_WIDTH, SPACE_COLORS, VIEW_GAP, VIEW_RADIUS } from '../shared/constants'
+import { SIDEBAR_TOP_HEIGHT, SIDEBAR_WIDTH, SPACE_COLORS, VIEW_GAP, VIEW_RADIUS, pageFrame } from '../shared/constants'
 import type {
   Action,
   AppInfo,
@@ -196,16 +196,20 @@ export class BrowserShell {
     for (const ev of ['enter-full-screen', 'leave-full-screen'] as const) {
       this.win.on(ev as 'enter-full-screen', () => {
         this.applyWindowButtons()
+        this.syncEdgeWatch()
         this.layout()
         this.emit() // the sidebar drops the gap it leaves for the window buttons
       })
     }
+    this.syncEdgeWatch() // a window can open already in full screen
     this.win.on('close', () => {
       saveState(this.state)
       flushState()
     })
     this.win.on('closed', () => {
       clearInterval(this.sleepTimer)
+      this.stopPeekWatch()
+      if (this.edgeWatch) clearInterval(this.edgeWatch)
       if (this.findIdleTimer) clearTimeout(this.findIdleTimer)
       for (const req of this.authQueue.splice(0)) req.callback()
       if (this.findView && !this.findView.webContents.isDestroyed()) this.findView.webContents.close()
@@ -346,8 +350,9 @@ export class BrowserShell {
   /** The page area of the window (right of the sidebar, inside the gaps). */
   private contentBox() {
     const [width, height] = this.win.getContentSize()
-    const left = this.state.sidebarVisible ? SIDEBAR_WIDTH : VIEW_GAP
-    return { x: left, y: VIEW_GAP, width: Math.max(0, width - left - VIEW_GAP), height: Math.max(0, height - VIEW_GAP * 2) }
+    const { gap } = pageFrame(this.win.isFullScreen())
+    const left = this.state.sidebarVisible ? SIDEBAR_WIDTH : gap
+    return { x: left, y: gap, width: Math.max(0, width - left - gap), height: Math.max(0, height - gap * 2) }
   }
 
   /** Rectangles for the visible panes: one full box, or two side by side for a split. */
@@ -391,7 +396,7 @@ export class BrowserShell {
       // Failed loads are shown by the UI underneath, so hide the blank page (single pane only).
       view.setVisible(this.attached.length > 1 || !this.runtime[id]?.error)
       view.setBounds(rects.get(id)!)
-      view.setBorderRadius(VIEW_RADIUS)
+      view.setBorderRadius(pageFrame(this.win.isFullScreen()).radius)
     }
     // Command bar, Library, split dragging: whole window. Peek sidebar: just its strip.
     this.overlay?.setBounds(
@@ -1230,6 +1235,7 @@ export class BrowserShell {
   toggleSidebar() {
     this.state.sidebarVisible = !this.state.sidebarVisible
     if (this.peek) this.setPeek(false)
+    this.syncEdgeWatch()
     this.applyWindowButtons()
     this.layout()
     this.emit()
@@ -1255,6 +1261,29 @@ export class BrowserShell {
   }
 
   private peekWatch: NodeJS.Timeout | null = null
+
+  /**
+   * In a normal window the hidden sidebar is brought back by a strip of the
+   * frame at the left edge, which notices the pointer. In full screen there is
+   * no frame: the page reaches the edge of the display. So while the sidebar is
+   * hidden in full screen, watch for the pointer reaching the left edge instead.
+   */
+  private syncEdgeWatch() {
+    const wanted = !this.win.isDestroyed() && this.win.isFullScreen() && !this.state.sidebarVisible
+    if (wanted === !!this.edgeWatch) return
+    if (this.edgeWatch) clearInterval(this.edgeWatch)
+    this.edgeWatch = wanted
+      ? setInterval(() => {
+          if (this.peek || this.win.isDestroyed() || !this.win.isFocused()) return
+          const point = screen.getCursorScreenPoint()
+          const bounds = this.win.getContentBounds()
+          const insideHeight = point.y >= bounds.y && point.y <= bounds.y + bounds.height
+          if (insideHeight && point.x <= bounds.x + 1) this.setPeek(true)
+        }, 120)
+      : null
+  }
+
+  private edgeWatch: NodeJS.Timeout | null = null
 
   private stopPeekWatch() {
     if (this.peekWatch) clearInterval(this.peekWatch)

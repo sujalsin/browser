@@ -3,6 +3,14 @@ export const SIDEBAR_WIDTH = 248
 /** Gap between the window edge and the rounded web view. */
 export const VIEW_GAP = 8
 export const VIEW_RADIUS = 10
+
+/**
+ * The frame around the page: a gap with rounded corners in a normal window,
+ * nothing in full screen, where the page should reach the edges of the display.
+ */
+export function pageFrame(fullscreen: boolean): { gap: number; radius: number } {
+  return fullscreen ? { gap: 0, radius: 0 } : { gap: VIEW_GAP, radius: VIEW_RADIUS }
+}
 /** Height of the strip at the top of the sidebar that holds the window buttons and drags the window. */
 export const SIDEBAR_TOP_HEIGHT = 44
 

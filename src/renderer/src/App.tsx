@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react'
-import { SIDEBAR_TOP_HEIGHT, SIDEBAR_WIDTH, VIEW_GAP, VIEW_RADIUS } from '../../shared/constants'
+import { SIDEBAR_TOP_HEIGHT, SIDEBAR_WIDTH, VIEW_GAP, pageFrame } from '../../shared/constants'
 import type { TabRuntime, UIState } from '../../shared/types'
 import { displayHost } from '../../shared/url'
 import { Icon } from './Icon'
@@ -15,12 +15,16 @@ export function rootClass(state: UIState): string {
 /** CSS variables shared by the window UI and the overlay. */
 export function themeStyle(state: UIState): CSSProperties {
   const space = state.spaces.find((s) => s.id === state.activeSpaceId) ?? state.spaces[0]
+  const frame = pageFrame(state.fullscreen)
   const style: Record<string, string> = {
     '--space': space.color,
     '--sidebar-width': `${SIDEBAR_WIDTH}px`,
-    '--gap': `${VIEW_GAP}px`,
+    // The frame around the page (none in full screen)…
+    '--gap': `${frame.gap}px`,
+    '--radius-page': `${frame.radius}px`,
+    // …and how far floating panels sit in from the window's edge (always).
+    '--float': `${VIEW_GAP}px`,
     '--top': `${SIDEBAR_TOP_HEIGHT}px`,
-    '--radius-page': `${VIEW_RADIUS}px`,
   }
   // A second color turns the frame into a gradient, like Arc's space themes.
   if (space.gradient) {
@@ -41,7 +45,7 @@ export function App() {
       {state.sidebarVisible && !state.htmlFullscreen && <Sidebar state={state} />}
       {/* Sidebar hidden: hovering the left edge slides it in over the page. */}
       {hidden && <div className="edge-reveal" onMouseEnter={() => dispatch({ type: 'sidebar.peek', open: true })} />}
-      <main className="content" style={{ left: state.sidebarVisible ? SIDEBAR_WIDTH : VIEW_GAP }}>
+      <main className="content" style={{ left: state.sidebarVisible ? SIDEBAR_WIDTH : pageFrame(state.fullscreen).gap }}>
         <div className="drag-strip" />
         {/* In split view each page fills its own half; there is no single card to draw. */}
         {!state.splitView && <div className="page-card" />}

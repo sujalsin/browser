@@ -12,6 +12,8 @@ type Result =
   | { kind: 'history'; item: HistoryItem }
 
 const MAX_RESULTS = 8
+/** Shown before anything is typed: the tabs you were on last. */
+const MAX_RECENT = 5
 
 function score(query: string, title: string, url: string): number {
   const q = query.toLowerCase()
@@ -34,7 +36,16 @@ function hostOf(url: string) {
 function buildResults(state: UIState, input: string, history: HistoryItem[]): Result[] {
   const query = input.trim()
   const results: Result[] = []
-  if (!query) return results
+  if (!query) {
+    // Nothing typed yet: offer the tabs you used most recently here (this space's, and its favorites).
+    const space = state.spaces.find((sp) => sp.id === state.activeSpaceId)
+    const favorites = new Set(space ? (state.favorites[space.partition] ?? []) : [])
+    return state.tabs
+      .filter((t) => t.id !== state.activeTabId && t.lastActiveAt > 0 && (t.kind === 'favorite' ? favorites.has(t.id) : t.spaceId === state.activeSpaceId))
+      .sort((a, b) => b.lastActiveAt - a.lastActiveAt)
+      .slice(0, MAX_RECENT)
+      .map((tab) => ({ kind: 'tab', tab }))
+  }
 
   const url = resolveInput(query, state.searchEngine)
   const go: Result | null = url
@@ -82,7 +93,8 @@ export function CommandBar({ state }: { state: UIState }) {
   useEffect(() => {
     if (!bar) return
     setInput(bar.initialInput)
-    setSelected(0)
+    // With nothing typed the list is only a suggestion: Enter must not act on it until you pick a row.
+    setSelected(bar.initialInput.trim() ? 0 : -1)
     requestAnimationFrame(() => {
       inputRef.current?.focus()
       inputRef.current?.select()
@@ -136,7 +148,7 @@ export function CommandBar({ state }: { state: UIState }) {
       setSelected((i) => Math.max(i - 1, 0))
     } else if (e.key === 'Enter') {
       e.preventDefault()
-      run(results[selected] ?? results[0])
+      run(selected >= 0 ? results[selected] : input.trim() ? results[0] : undefined)
     }
   }
 
@@ -154,13 +166,14 @@ export function CommandBar({ state }: { state: UIState }) {
             autoComplete="off"
             onChange={(e) => {
               setInput(e.target.value)
-              setSelected(0)
+              setSelected(e.target.value.trim() ? 0 : -1)
             }}
             onKeyDown={onKeyDown}
           />
         </div>
         {results.length > 0 && (
           <ul className="command-results">
+            {!input.trim() && <li className="command-label">Recent tabs</li>}
             {results.map((r, i) => (
               <li
                 key={r.kind === 'tab' ? r.tab.id : r.kind === 'archive' ? `a${r.index}` : r.kind === 'history' ? `h${r.item.url}` : 'go'}
