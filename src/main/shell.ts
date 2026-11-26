@@ -542,17 +542,24 @@ export class BrowserShell {
         return
       }
       rt().error = { code, description, url }
-      update({ url, title: displayHost(url) })
+      update({ url, title: displayHost(url), favicon: undefined }) // nothing loaded: no icon to show
       this.layout()
     })
     wc.on('did-stop-loading', () => {
       if (rt()) rt().loading = false
       syncNav()
     })
+    // The page's icon. Chromium announces it only when it CHANGES: going from one
+    // page to another with the same icon (most pages of a site) announces nothing.
+    // So the last one announced stays in force until the next announcement, and a
+    // tab waking from sleep keeps its saved icon until its page says otherwise.
+    let icon = this.tab(id)?.favicon
     wc.on('did-navigate', (_e, url, httpResponseCode) => {
       this.typedIn.delete(id)
       if (rt()) rt().translated = undefined // a new page starts untranslated
-      update({ url, favicon: undefined })
+      // Pages that aren't websites (blank, page source) announce nothing and have no icon.
+      update({ url, favicon: isWebUrl(url) ? icon : undefined })
+      if (icon && isWebUrl(url) && httpResponseCode < 400) history((db) => db.setFavicon(url, icon!))
       syncNav()
       if (isWebUrl(url) && httpResponseCode < 400) history((db) => db.addVisit(url, ''))
       lastRecorded = stripHash(url)
@@ -575,9 +582,10 @@ export class BrowserShell {
       if (isWebUrl(url)) history((db) => db.setTitle(url, title))
     })
     wc.on('page-favicon-updated', (_e, favicons) => {
-      update({ favicon: favicons[0] })
+      icon = favicons[0]
       const url = wc.getURL()
-      if (favicons[0] && isWebUrl(url)) history((db) => db.setFavicon(url, favicons[0]))
+      update({ favicon: isWebUrl(url) ? icon : undefined })
+      if (icon && isWebUrl(url)) history((db) => db.setFavicon(url, icon!))
     })
     // Clicking into the other pane of a split makes it the active tab.
     const focusPane = () => {
