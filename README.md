@@ -200,6 +200,12 @@ They are compiled on a background thread and cached, so they don't slow down sta
   least recently used tabs sleep early. Tabs playing audio or with typed text are never touched.
 - **Task Manager** (Window → Task Manager) shows memory and CPU per tab, with a Sleep button.
 - **Shields** (above) are the biggest win: ads and trackers are most of a page's CPU use.
+- **Idle means idle.** With nothing happening the browser's own process uses no measurable CPU.
+  Background tabs draw no frames and their timers are slowed, as in Chrome.
+- **Filter lists update in a process of their own**, once a day, which exits when done. Building
+  the engine needs a couple of hundred megabytes for a few seconds; none of it stays with the browser.
+- **Animations move, they don't resize.** The sidebar slide changes the page's size once, not on
+  every frame, and all motion is skipped if macOS is set to reduce motion.
 
 ## Signing in with Google on other sites
 

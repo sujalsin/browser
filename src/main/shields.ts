@@ -1,5 +1,5 @@
 import { ElectronBlocker } from '@ghostery/adblocker-electron'
-import { app, ipcMain, net, type IpcMainEvent, type IpcMainInvokeEvent, type Session } from 'electron'
+import { app, ipcMain, net, utilityProcess, type IpcMainEvent, type IpcMainInvokeEvent, type Session } from 'electron'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
@@ -7,7 +7,8 @@ import { getDomain, parse } from 'tldts-experimental'
 import { isHttpsFailure, isUpgradeable, stripTrackingParams, toHttp, toHttps } from '../shared/privacy'
 import { SCRIPTLETS_CHANNEL, isolateScriptlets } from '../shared/scriptlets'
 import type { ShieldsSettings, ShieldsStatus } from '../shared/types'
-import createWorker from './shields-worker?nodeWorker'
+import type { BuildInput, BuildOutput } from './shields-worker'
+import builderPath from './shields-worker?modulePath'
 
 // Same lists Ghostery ships as "ads and tracking", plus cookie-notice lists.
 // These are mirrors of EasyList, EasyPrivacy, uBlock Origin and Peter Lowe's lists.
@@ -35,6 +36,27 @@ const REFRESH_AFTER_MS = 24 * 60 * 60 * 1000
 const CHECK_EVERY_MS = 6 * 60 * 60 * 1000
 /** Let startup finish before doing heavy work on a slow machine. */
 const FIRST_REFRESH_DELAY_MS = 20_000
+/** Give up on a filter build that takes longer than this (a slow machine needs a few seconds). */
+const BUILD_TIMEOUT_MS = 120_000
+
+/** Compile filter lists into an engine, in a process that exists only for this. */
+function buildEngine(input: BuildInput): Promise<BuildOutput> {
+  return new Promise((resolve, reject) => {
+    const child = utilityProcess.fork(builderPath, [], { serviceName: 'Filter list update' })
+    let settled = false
+    const finish = (done: () => void) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      child.kill()
+      done()
+    }
+    const timer = setTimeout(() => finish(() => reject(new Error('filter build timed out'))), BUILD_TIMEOUT_MS)
+    child.once('spawn', () => child.postMessage(input))
+    child.once('message', (output: BuildOutput) => finish(() => resolve(output)))
+    child.once('exit', (code) => finish(() => reject(new Error(`filter build stopped (code ${code})`))))
+  })
+}
 
 const COSMETIC_CHANNEL = '@ghostery/adblocker/inject-cosmetic-filters'
 const MUTATION_CHANNEL = '@ghostery/adblocker/is-mutation-observer-enabled'
@@ -133,7 +155,7 @@ export class Shields {
     }, delay)
   }
 
-  /** Download the lists and rebuild the engine on a worker thread. */
+  /** Download the lists and rebuild the engine (in a separate process, see shields-worker.ts). */
   async refresh(): Promise<void> {
     if (this.status.updating) return
     this.status = { ...this.status, updating: true, error: undefined }
@@ -147,12 +169,7 @@ export class Shields {
       }
       const [lists, resources] = await Promise.all([Promise.all(names.map(fetchText)), fetchText(RESOURCES).catch(() => undefined)])
 
-      const { bytes, filterCount } = await new Promise<{ bytes: Uint8Array; filterCount: number }>((resolve, reject) => {
-        const worker = createWorker({ workerData: { lists, resources } })
-        worker.once('message', resolve)
-        worker.once('error', reject)
-        worker.once('exit', (code) => code !== 0 && reject(new Error(`filter worker exited with ${code}`)))
-      })
+      const { bytes, filterCount } = await buildEngine({ lists, resources })
 
       this.engine = ElectronBlocker.deserialize(bytes)
       const meta: CacheMeta = { updatedAt: Date.now(), listsKey: this.listsKey(), filterCount }

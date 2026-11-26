@@ -643,11 +643,13 @@ export class BrowserShell {
     })
     wc.on('enter-html-full-screen', () => {
       this.fullscreenTab = id
+      this.syncEdgeWatch()
       this.layout()
       this.emit(false)
     })
     wc.on('leave-html-full-screen', () => {
       if (this.fullscreenTab === id) this.fullscreenTab = null
+      this.syncEdgeWatch()
       this.layout()
       this.emit(false)
     })
@@ -1342,7 +1344,9 @@ export class BrowserShell {
    * hidden in full screen, watch for the pointer reaching the left edge instead.
    */
   private syncEdgeWatch() {
-    const wanted = !this.win.isDestroyed() && this.win.isFullScreen() && !this.state.sidebarVisible
+    // Not while a video fills the screen: nothing should slide in over it, and the
+    // browser should be doing as little as possible then.
+    const wanted = !this.win.isDestroyed() && this.win.isFullScreen() && !this.state.sidebarVisible && !this.fullscreenTab
     if (wanted === !!this.edgeWatch) return
     if (this.edgeWatch) clearInterval(this.edgeWatch)
     this.edgeWatch = wanted
@@ -1352,7 +1356,7 @@ export class BrowserShell {
           const bounds = this.win.getContentBounds()
           const insideHeight = point.y >= bounds.y && point.y <= bounds.y + bounds.height
           if (insideHeight && point.x <= bounds.x + 1) this.setPeek(true)
-        }, 120)
+        }, 150)
       : null
   }
 
