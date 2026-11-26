@@ -1,4 +1,4 @@
-import { BrowserWindow, Menu, WebContentsView, app, clipboard, components, dialog, nativeTheme, screen, session, shell as electronShell, type WebContents } from 'electron'
+import { BrowserWindow, Menu, WebContentsView, app, clipboard, components, dialog, nativeTheme, screen, session, shell as electronShell, systemPreferences, type WebContents } from 'electron'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { homedir, totalmem } from 'node:os'
@@ -64,7 +64,12 @@ import { showSiteInfo } from './site-info'
 import { restorePage, translatePage } from './translate'
 import { flushState, saveState } from './store'
 
+/** How long the page takes to slide when the sidebar is shown or hidden. */
+const SIDEBAR_SLIDE_MS = 180
 const MAX_CLOSED = 25
+
+/** What Chromium hands over when a page opens a window: the new page itself, and the size it asked for. */
+type PopupOptions = Electron.BrowserWindowConstructorOptions & { webContents: WebContents }
 const NEW_TAB_TITLE = 'New Tab'
 /** How often the sidebar UI is refreshed at most. Keeps busy pages cheap. */
 const EMIT_INTERVAL_MS = 50
@@ -203,11 +208,13 @@ export class BrowserShell {
     }
     this.syncEdgeWatch() // a window can open already in full screen
     this.win.on('close', () => {
+      this.closing = true
       saveState(this.state)
       flushState()
     })
     this.win.on('closed', () => {
       clearInterval(this.sleepTimer)
+      if (this.slide) clearInterval(this.slide.timer)
       this.stopPeekWatch()
       if (this.edgeWatch) clearInterval(this.edgeWatch)
       if (this.findIdleTimer) clearTimeout(this.findIdleTimer)
@@ -348,16 +355,15 @@ export class BrowserShell {
   // ───────────────────────────── layout ─────────────────────────────
 
   /** The page area of the window (right of the sidebar, inside the gaps). */
-  private contentBox() {
+  private contentBox(sidebarVisible = this.state.sidebarVisible) {
     const [width, height] = this.win.getContentSize()
     const { gap } = pageFrame(this.win.isFullScreen())
-    const left = this.state.sidebarVisible ? SIDEBAR_WIDTH : gap
+    const left = sidebarVisible ? SIDEBAR_WIDTH : gap
     return { x: left, y: gap, width: Math.max(0, width - left - gap), height: Math.max(0, height - gap * 2) }
   }
 
   /** Rectangles for the visible panes: one full box, or two side by side for a split. */
-  private paneRects(): Map<string, Electron.Rectangle> {
-    const box = this.contentBox()
+  private paneRects(box = this.contentBox()): Map<string, Electron.Rectangle> {
     const rects = new Map<string, Electron.Rectangle>()
     if (this.attached.length === 2) {
       const split = this.splitOf(this.attached[0])
@@ -381,6 +387,8 @@ export class BrowserShell {
 
   private layout() {
     if (this.win.isDestroyed()) return
+    // Anything that needs a fresh layout while the sidebar is sliding ends the slide first.
+    if (this.slide) return this.endSlide()
     const [width, height] = this.win.getContentSize()
     const rects = this.paneRects()
     for (const id of this.attached) {
@@ -643,6 +651,11 @@ export class BrowserShell {
       this.layout()
       this.emit(false)
     })
+    // The site closed this page itself (window.close(), or the page that opened it did).
+    // When we destroy a page ourselves (sleep, close), it has left `views` by then.
+    wc.once('destroyed', () => {
+      if (!this.closing && !this.win.isDestroyed() && this.views.get(id) === view) this.closeTab(id)
+    })
     wc.on('render-process-gone', (_e, details) => {
       if (details.reason === 'clean-exit') return
       console.warn(`Tab ${id} crashed (${details.reason}); it will reload when selected again.`)
@@ -657,11 +670,7 @@ export class BrowserShell {
       if (disposition === 'new-window' && features) {
         return {
           action: 'allow',
-          overrideBrowserWindowOptions: {
-            width: 520,
-            height: 680,
-            webPreferences: pagePreferences(this.partitionOf(this.tab(id)!)),
-          },
+          createWindow: (options) => this.openPopup(id, options as PopupOptions),
         }
       }
       const opener = this.tab(id)
@@ -700,8 +709,10 @@ export class BrowserShell {
   private unload(id: string, keepHistory = false) {
     const view = this.views.get(id)
     if (!view) return
-    const wc = view.webContents
-    if (keepHistory && !wc.isDestroyed()) {
+    // Gone already when the site closed the page itself.
+    const wc = view.webContents as WebContents | undefined
+    const alive = !!wc && !wc.isDestroyed()
+    if (keepHistory && alive) {
       this.sleptHistory.set(id, { entries: wc.navigationHistory.getAllEntries(), index: wc.navigationHistory.getActiveIndex() })
     } else {
       this.sleptHistory.delete(id)
@@ -714,9 +725,9 @@ export class BrowserShell {
     }
     this.views.delete(id)
     this.typedIn.delete(id)
-    this.boostCss.delete(wc.id)
+    if (alive) this.boostCss.delete(wc.id)
     delete this.runtime[id]
-    if (!wc.isDestroyed()) wc.close()
+    if (alive) wc.close()
   }
 
   /** Put a background tab to sleep: frees its memory and CPU; it reloads when selected. */
@@ -1240,13 +1251,67 @@ export class BrowserShell {
     ]).popup({ window: this.win })
   }
 
+  /**
+   * Show or hide the sidebar, with the page sliding aside to uncover it or back
+   * over it. The sidebar itself doesn't move: it sits underneath the page.
+   *
+   * Only the page's position changes during the slide. Its size changes once
+   * (before a hide, after a show), because every change of size makes the page
+   * lay itself out again, and doing that for each frame is what makes such an
+   * animation stutter on a slow machine.
+   */
   toggleSidebar() {
-    this.state.sidebarVisible = !this.state.sidebarVisible
+    if (this.slide) this.endSlide()
+    const show = !this.state.sidebarVisible
     if (this.peek) this.setPeek(false)
+    const panes = this.fullscreenTab ? [] : this.attached.flatMap((id) => (this.views.has(id) ? [{ id, view: this.views.get(id)! }] : []))
+    const animate = panes.length > 0 && this.win.isVisible() && !systemPreferences.getAnimationSettings().prefersReducedMotion
+    if (!animate) return this.setSidebarVisible(show)
+
+    const shift = this.contentBox(show).x - this.contentBox(!show).x
+    if (show) {
+      // Uncover: the sidebar is drawn now, the page moves off it, and takes its narrower size at the end.
+      this.state.sidebarVisible = true
+      this.applyWindowButtons()
+      this.emitNow()
+    } else {
+      // Cover: the page takes its wider size first (running off the right edge for a moment), then moves over.
+      const wide = this.paneRects(this.contentBox(false))
+      for (const { id, view } of panes) view.setBounds({ ...wide.get(id)!, x: wide.get(id)!.x - shift })
+    }
+    const views = panes.map((p) => p.view)
+    const from = views.map((view) => view.getBounds())
+    const started = Date.now()
+    const timer = setInterval(() => {
+      const t = Math.min(1, (Date.now() - started) / SIDEBAR_SLIDE_MS)
+      const eased = 1 - (1 - t) ** 3
+      views.forEach((view, i) => !view.webContents.isDestroyed() && view.setBounds({ ...from[i], x: Math.round(from[i].x + shift * eased) }))
+      if (t >= 1) this.endSlide()
+    }, 1000 / 60)
+    this.slide = { timer, show }
+  }
+
+  /** The window is going away: pages being destroyed now are not tabs being closed. */
+  private closing = false
+
+  /** A sidebar slide in progress, and where it is heading. */
+  private slide: { timer: NodeJS.Timeout; show: boolean } | null = null
+
+  /** Finish the slide at once: final state, final layout. */
+  private endSlide() {
+    const slide = this.slide
+    if (!slide) return
+    clearInterval(slide.timer)
+    this.slide = null
+    this.setSidebarVisible(slide.show)
+  }
+
+  private setSidebarVisible(visible: boolean) {
+    this.state.sidebarVisible = visible
     this.syncEdgeWatch()
     this.applyWindowButtons()
     this.layout()
-    this.emit()
+    this.emitNow()
   }
 
   /**
@@ -1922,6 +1987,30 @@ export class BrowserShell {
   }
 
   /** The Little Arc window whose toolbar sent an action, if any. */
+  /**
+   * A window a site opens itself, such as "Continue with Google". Chromium has
+   * already made its page (`options.webContents`), tied to the page that opened
+   * it; it is shown in a small window of ours that says whose page it is.
+   */
+  private openPopup(openerTabId: string, options: PopupOptions): WebContents {
+    const opener = this.tab(openerTabId)
+    const space = this.state.spaces.find((sp) => sp.id === opener?.spaceId) ?? this.space()
+    const little = new LittleWindow({
+      rendererUrl: this.rendererUrl,
+      partition: space.partition,
+      spaceName: space.name,
+      color: space.color,
+      searchEngine: () => this.state.searchEngine,
+      onToMain: () => {},
+      onVisit: () => {}, // sign-in windows don't belong in history
+      wirePage: (wc) => attachWebContextMenu(this, wc),
+      popup: { webContents: options.webContents, width: options.width, height: options.height },
+    })
+    this.littles.add(little)
+    little.win.on('closed', () => this.littles.delete(little))
+    return little.pageWebContents
+  }
+
   littleFor(wc: WebContents): LittleWindow | undefined {
     for (const l of this.littles) if (l.isUI(wc)) return l
     return undefined
@@ -1929,6 +2018,8 @@ export class BrowserShell {
 
   handleLittleAction(little: LittleWindow, action: Action) {
     switch (action.type) {
+      case 'little.ready':
+        return little.send()
       case 'little.navigate':
         return little.navigate(String(action.input ?? '').slice(0, 4000))
       case 'little.back':

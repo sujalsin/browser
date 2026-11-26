@@ -102,6 +102,29 @@
 }
 
 /*
+ * Declaring the space colors as real colors (not just text) lets them be
+ * animated: switching spaces blends the whole frame from one color to the next.
+ */
+@property --space {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #7c6cf2;
+}
+
+@property --space-2 {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #7c6cf2;
+}
+
+.window,
+.overlay-root {
+  transition:
+    --space 0.3s ease,
+    --space-2 0.3s ease;
+}
+
+/*
  * Colors derived from --space. Declared where --space is set (each surface's
  * root element), because a derived value is fixed where it is declared.
  */
@@ -113,6 +136,12 @@
   /* The space color, nudged toward the text color so it reads on the frame in both modes. */
   --accent: color-mix(in oklab, var(--space) 82%, var(--text));
   --accent-soft: color-mix(in oklab, var(--space) 16%, transparent);
+}
+
+/* A space with two colors: the frame runs from one to the other. */
+.window.gradient,
+.overlay-root.gradient {
+  --frame-bg: linear-gradient(165deg, color-mix(in oklab, var(--space) 30%, var(--base)), color-mix(in oklab, var(--space-2) 30%, var(--base)));
 }
 
 * {
@@ -639,6 +668,37 @@ browser-action-list::part(action):hover {
   }
 }
 
+/*
+ * Switching spaces: the list comes in from the side you moved toward. The rows
+ * skip their own entrance then, so it reads as one movement.
+ */
+.tab-scroll.from-right {
+  animation: space-from-right 0.2s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.tab-scroll.from-left {
+  animation: space-from-left 0.2s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.tab-scroll.from-right :is(.tab-row, .folder-row, .favorite),
+.tab-scroll.from-left :is(.tab-row, .folder-row, .favorite) {
+  animation: none;
+}
+
+@keyframes space-from-right {
+  from {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+}
+
+@keyframes space-from-left {
+  from {
+    opacity: 0;
+    transform: translateX(-28px);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::after,
@@ -998,6 +1058,152 @@ browser-action-list::part(action):hover {
   place-items: center;
 }
 
+/* Start page: shown when no tab is open. */
+
+.empty-state.start {
+  place-items: start center;
+  overflow-y: auto;
+}
+
+.start-column {
+  width: min(600px, 100% - 64px);
+  padding: 15vh 0 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  animation: row-in 0.2s ease-out;
+}
+
+.start-head h1 {
+  margin: 0;
+  font-size: 30px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.start-head p {
+  margin: 4px 0 0;
+  font-size: 14px;
+  color: var(--text-dim);
+}
+
+.start-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 48px;
+  padding: 0 14px 0 16px;
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow:
+    inset 0 0 0 1px var(--divider),
+    0 1px 2px rgba(24, 20, 48, 0.04);
+  color: var(--text-faint);
+  font-size: 15px;
+  text-align: left;
+  transition: box-shadow 0.12s;
+}
+
+.start-search:hover {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in oklab, var(--space) 45%, transparent),
+    0 2px 10px -2px var(--accent-soft);
+}
+
+.start-search span {
+  flex: 1;
+}
+
+.start-tiles {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+.start-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  padding: 16px 8px 12px;
+  border-radius: 14px;
+  min-width: 0;
+  transition: background-color 0.1s;
+}
+
+.start-tile:hover {
+  background: var(--hover);
+}
+
+.start-tile-icon {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border-radius: 13px;
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--divider);
+}
+
+.start-tile-icon .favicon {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.start-tile-name {
+  max-width: 100%;
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.start-list h2 {
+  margin: 0 0 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.start-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border-radius: 9px;
+  text-align: left;
+  transition: background-color 0.1s;
+}
+
+.start-row:hover {
+  background: var(--hover);
+}
+
+.start-row-title {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.start-row-host {
+  font-size: 12px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.start .private-note {
+  margin: -8px 0 0;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
 .empty-card {
   max-width: 440px;
   padding: 0 24px;
@@ -1142,6 +1348,23 @@ kbd {
 
 .command-result.selected {
   background: var(--accent-soft);
+}
+
+.command-foot {
+  display: flex;
+  gap: 18px;
+  padding: 9px 16px 10px;
+  border-top: 1px solid var(--divider);
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+.command-foot kbd {
+  min-width: 18px;
+  margin-right: 3px;
+  font-size: 10.5px;
+  line-height: 16px;
+  color: var(--text-dim);
 }
 
 .command-label {
@@ -1391,12 +1614,86 @@ kbd {
 .lib-select {
   font: inherit;
   font-size: 12.5px;
+  font-weight: 500;
   height: 30px;
-  padding: 0 8px;
+  padding: 0 28px 0 10px;
   border-radius: 8px;
   border: 1px solid var(--divider);
-  background: var(--panel);
+  /* Our own arrow in place of the system's. */
+  appearance: none;
+  background: var(--panel)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none' stroke='%23888' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1l4 4 4-4'/%3E%3C/svg%3E")
+    no-repeat right 9px center;
   color: var(--text);
+  transition: border-color 0.1s;
+}
+
+.lib-select:hover,
+.lib-select:focus-visible {
+  border-color: color-mix(in oklab, var(--space) 50%, transparent);
+  outline: none;
+}
+
+/* A choice between a few options, shown side by side. */
+.segmented {
+  display: flex;
+  padding: 2px;
+  border-radius: 9px;
+  background: var(--hover);
+}
+
+.segmented button {
+  height: 26px;
+  padding: 0 12px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-dim);
+  transition: background-color 0.1s;
+}
+
+.segmented button.on {
+  background: var(--active-bg);
+  box-shadow: var(--active-shadow);
+  color: var(--text);
+}
+
+/* Settings: jump to a section */
+.set-nav {
+  display: flex;
+  gap: 4px;
+  padding: 10px 22px;
+  border-bottom: 1px solid var(--divider);
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.set-nav::-webkit-scrollbar {
+  height: 0;
+}
+
+.set-chip {
+  height: 26px;
+  padding: 0 11px;
+  border-radius: 13px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-dim);
+  white-space: nowrap;
+  transition: background-color 0.1s;
+}
+
+.set-chip:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.space-preview {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: 9px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
 }
 
 .lib-button {
@@ -1564,11 +1861,15 @@ kbd {
   padding: 4px 24px 24px;
 }
 
+.set-section {
+  scroll-margin-top: 4px;
+}
+
 .set-section h3 {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-dim);
-  margin: 22px 2px 8px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text);
+  margin: 26px 2px 10px;
 }
 
 .set-card {
@@ -1851,6 +2152,39 @@ html[data-surface='little'] body {
 .little-host {
   font-size: 12px;
   color: var(--text-dim);
+}
+
+/* Popup windows: a read-only line saying whose page this is. */
+.little-site {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border-radius: 9px;
+  background: var(--fill);
+  box-shadow: inset 0 0 0 0.5px var(--divider);
+  color: var(--text-dim);
+  -webkit-app-region: drag;
+}
+
+.little-site .insecure {
+  color: var(--warn);
+}
+
+.little-site-host {
+  font-weight: 550;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.little-site .little-host {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .little-open {

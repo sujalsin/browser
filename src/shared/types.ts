@@ -273,6 +273,8 @@ export interface LittleState {
   spaceName: string
   color: string
   platform: string
+  /** A window a site opened itself (sign-in and the like): read-only toolbar. */
+  popup: boolean
 }
 
 export type LibraryTab = 'history' | 'downloads' | 'settings' | 'boosts' | 'tasks'
@@ -345,6 +347,7 @@ export type Action =
   | { type: 'boost.delete'; id: string }
   | { type: 'space.update'; id: string; color?: string; gradient?: string | null }
   | { type: 'little.open'; url?: string }
+  | { type: 'little.ready' }
   | { type: 'little.navigate'; input: string }
   | { type: 'little.back' }
   | { type: 'little.forward' }

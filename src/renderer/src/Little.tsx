@@ -12,7 +12,13 @@ export function Little() {
   const [text, setText] = useState('')
   const input = useRef<HTMLInputElement>(null)
 
-  useEffect(() => window.browser.onLittleState(setState), [])
+  useEffect(() => {
+    const off = window.browser.onLittleState(setState)
+    // Ask for the current state now that we are listening: a popup's page was
+    // loaded before this toolbar existed, so nothing else would tell us about it.
+    dispatch({ type: 'little.ready' })
+    return off
+  }, [])
   // A brand-new Little Arc has no page yet: start typing right away.
   useEffect(() => {
     if (state && !state.url && !editing) {
@@ -24,6 +30,23 @@ export function Little() {
 
   if (!state) return null
   const style = { '--space': state.color } as CSSProperties
+
+  // A window a site opened itself (sign-in and the like): say whose page it is, nothing more.
+  if (state.popup) {
+    const secure = state.url.startsWith('https://')
+    return (
+      <div className={`little ${state.platform}`} style={style}>
+        <div className="little-bar popup">
+          <div className="little-lights" />
+          <div className="little-site" title={state.url}>
+            {state.loading ? <span className="favicon spinner" /> : <Icon name={secure ? 'lock' : 'info'} size={13} className={secure ? '' : 'insecure'} />}
+            <span className="little-site-host">{displayHost(state.url) || 'Loading…'}</span>
+            {state.title && state.title !== state.url && <span className="little-host">{state.title}</span>}
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className={`little ${state.platform}`} style={style}>

@@ -164,6 +164,10 @@ export function Sidebar({ state }: { state: UIState }) {
   const dragApi = useMemo<DragApi>(() => ({ get: () => dragRef.current, setDragging, setOver }), [])
 
   const space = state.spaces.find((s) => s.id === state.activeSpaceId) ?? state.spaces[0]
+  // Which way the list should come in when the space changes: from the side of the space you moved to.
+  const spaceIndex = state.spaces.indexOf(space)
+  const [arrival, setArrival] = useState({ id: space.id, index: spaceIndex, from: '' })
+  if (arrival.id !== space.id) setArrival({ id: space.id, index: spaceIndex, from: spaceIndex >= arrival.index ? 'from-right' : 'from-left' })
   const active = state.tabs.find((t) => t.id === state.activeTabId)
   const rt = active ? state.runtime[active.id] : undefined
   const favorites = state.favorites[space.partition] ?? []
@@ -233,7 +237,7 @@ export function Sidebar({ state }: { state: UIState }) {
               </div>
             )}
 
-            <div className="tab-scroll">
+            <div className={`tab-scroll ${arrival.from}`} key={space.id}>
               <Favorites ids={favorites} />
 
               <div className="space-header" onContextMenu={(e) => (e.preventDefault(), dispatch({ type: 'space.menu', id: space.id }))}>

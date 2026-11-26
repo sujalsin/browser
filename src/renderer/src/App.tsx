@@ -4,12 +4,13 @@ import type { TabRuntime, UIState } from '../../shared/types'
 import { displayHost } from '../../shared/url'
 import { Icon } from './Icon'
 import { Sidebar } from './Sidebar'
+import { StartPage } from './Start'
 import { dispatch, useBrowserState } from './useBrowserState'
 
 /** Class names every surface's root shares: the system, full screen, private browsing. */
 export function rootClass(state: UIState): string {
-  const isPrivate = !!state.spaces.find((s) => s.id === state.activeSpaceId)?.private
-  return `${state.platform} ${state.fullscreen ? 'fullscreen' : ''} ${isPrivate ? 'private' : ''}`
+  const space = state.spaces.find((s) => s.id === state.activeSpaceId)
+  return `${state.platform} ${state.fullscreen ? 'fullscreen' : ''} ${space?.private ? 'private' : ''} ${space?.gradient ? 'gradient' : ''}`
 }
 
 /** CSS variables shared by the window UI and the overlay. */
@@ -26,11 +27,8 @@ export function themeStyle(state: UIState): CSSProperties {
     '--float': `${VIEW_GAP}px`,
     '--top': `${SIDEBAR_TOP_HEIGHT}px`,
   }
-  // A second color turns the frame into a gradient, like Arc's space themes.
-  if (space.gradient) {
-    style['--frame-bg'] =
-      `linear-gradient(165deg, color-mix(in oklab, ${space.color} 30%, var(--base)), color-mix(in oklab, ${space.gradient} 30%, var(--base)))`
-  }
+  // A second color turns the frame into a gradient, like Arc's space themes (see .gradient in the styles).
+  if (space.gradient) style['--space-2'] = space.gradient
   return style as CSSProperties
 }
 
@@ -38,8 +36,6 @@ export function App() {
   const state = useBrowserState()
   if (!state) return null
   const hidden = !state.sidebarVisible && !state.htmlFullscreen
-  const isPrivate = !!state.spaces.find((s) => s.id === state.activeSpaceId)?.private
-
   return (
     <div className={`window ${rootClass(state)}`} style={themeStyle(state)}>
       {state.sidebarVisible && !state.htmlFullscreen && <Sidebar state={state} />}
@@ -49,35 +45,10 @@ export function App() {
         <div className="drag-strip" />
         {/* In split view each page fills its own half; there is no single card to draw. */}
         {!state.splitView && <div className="page-card" />}
-        {!state.activeTabId && <EmptyState isPrivate={isPrivate} />}
+        {!state.activeTabId && <StartPage state={state} />}
         {state.activeTabId && !state.splitView && state.runtime[state.activeTabId]?.error && <LoadError error={state.runtime[state.activeTabId].error!} />}
       </main>
       {state.splitView && <SplitChrome state={state} />}
-    </div>
-  )
-}
-
-function EmptyState({ isPrivate }: { isPrivate: boolean }) {
-  return (
-    <div className="empty-state">
-      <div className="empty-card">
-        <div className="empty-mark">
-          <Icon name={isPrivate ? 'private' : 'tab'} size={24} />
-        </div>
-        <h1>{isPrivate ? 'Private browsing' : 'Nothing open'}</h1>
-        {isPrivate && (
-          <p className="private-note">
-            Pages you open here aren’t added to history, and cookies and logins are discarded when you close this space. Downloads you keep stay on your
-            Mac. Extensions are off. Websites and your network can still see what you do.
-          </p>
-        )}
-        <p>
-          Press <kbd>⌘</kbd> <kbd>T</kbd> to open a tab.
-        </p>
-        <button className="primary-btn" onClick={() => dispatch({ type: 'commandBar.open', mode: 'new' })}>
-          New Tab
-        </button>
-      </div>
     </div>
   )
 }

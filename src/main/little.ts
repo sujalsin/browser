@@ -18,11 +18,21 @@ export interface LittleOptions {
   onVisit: (url: string, title: string) => void
   /** Set up context menus etc. for the page, like a normal tab. */
   wirePage: (wc: WebContents) => void
+  /**
+   * A window a site opened itself (sign-in windows and the like). Its page
+   * already exists and is shown as it is: the site that opened it keeps its
+   * link to it and closes it when it is done. The toolbar only shows whose
+   * page this is; it offers no way to go elsewhere.
+   */
+  popup?: { webContents: WebContents; width?: number; height?: number }
 }
+
+const clamp = (n: number | undefined, min: number, max: number, fallback: number) => Math.min(max, Math.max(min, Math.round(n ?? fallback)))
 
 /**
  * Little Arc: a small window for a quick lookup or a link from another app.
  * The page lives in a WebContentsView under a tiny toolbar (our renderer, #little).
+ * The same window, with a read-only toolbar, hosts pages that sites open as popups.
  */
 export class LittleWindow {
   readonly win: BrowserWindow
@@ -32,20 +42,24 @@ export class LittleWindow {
     const isMac = process.platform === 'darwin'
     const parent = BrowserWindow.getFocusedWindow()
     const [px, py] = parent?.getPosition() ?? [undefined, undefined]
+    const popup = opts.popup
     this.win = new BrowserWindow({
-      width: 960,
-      height: 680,
-      minWidth: 420,
+      // A popup gets the size its site asked for, within reason.
+      width: popup ? clamp(popup.width, 380, 1400, 520) + GAP * 2 : 960,
+      height: popup ? clamp(popup.height, 320, 1100, 640) + TOOLBAR + GAP : 680,
+      minWidth: popup ? 380 : 420,
       minHeight: 300,
+      useContentSize: true,
+      autoHideMenuBar: true,
       ...(px !== undefined ? { x: px + 80, y: (py ?? 0) + 60 } : {}),
       show: false,
-      title: 'Little Arc',
+      title: popup ? '' : 'Little Arc',
       titleBarStyle: isMac ? 'hiddenInset' : 'default',
       trafficLightPosition: { x: 12, y: 15 },
       backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1b22' : '#e9e7f2',
       webPreferences: { preload: join(__dirname, '../preload/index.js'), sandbox: true, contextIsolation: true, nodeIntegration: false },
     })
-    this.view = new WebContentsView({ webPreferences: pagePreferences(opts.partition) })
+    this.view = popup ? new WebContentsView({ webContents: popup.webContents }) : new WebContentsView({ webPreferences: pagePreferences(opts.partition) })
     this.view.setBackgroundColor('#ffffff')
     this.view.setBorderRadius(8)
     this.win.contentView.addChildView(this.view)
@@ -72,11 +86,16 @@ export class LittleWindow {
     this.win.on('closed', () => {
       if (!wc.isDestroyed()) wc.close()
     })
+    // The page closed itself, or the page that opened it closed it: the window goes with it.
+    wc.once('destroyed', () => {
+      if (!this.win.isDestroyed()) this.win.close()
+    })
     this.win.webContents.on('did-finish-load', () => this.send())
     this.win.once('ready-to-show', () => {
       this.win.show()
-      // Nothing to show yet: put the cursor in the address field.
-      if (!url) this.win.webContents.focus()
+      // Nothing to show yet: put the cursor in the address field. A popup: straight to its page.
+      if (popup) wc.focus()
+      else if (!url) this.win.webContents.focus()
     })
     void this.win.loadURL(`${opts.rendererUrl}#little`)
     this.layout()
@@ -107,17 +126,20 @@ export class LittleWindow {
       spaceName: this.opts.spaceName,
       color: this.opts.color,
       platform: process.platform,
+      popup: !!this.opts.popup,
     }
   }
 
-  private send() {
+  /** Tell the toolbar what the page is showing. The toolbar asks once when it starts up. */
+  send() {
     if (this.win.isDestroyed() || this.win.webContents.isDestroyed()) return
     const state = this.state()
-    this.win.setTitle(state.title ? `Little Arc — ${state.title}` : 'Little Arc')
+    this.win.setTitle(this.opts.popup ? state.title || state.url : state.title ? `Little Arc — ${state.title}` : 'Little Arc')
     this.win.webContents.send(IPC.littleState, state)
   }
 
   navigate(input: string) {
+    if (this.opts.popup) return // a popup stays on the pages its site sends it to
     const url = resolveInput(input, this.opts.searchEngine())
     if (!url) return
     void this.view.webContents.loadURL(url).catch(() => {})
@@ -137,6 +159,7 @@ export class LittleWindow {
   }
 
   toMain() {
+    if (this.opts.popup) return // moving it would cut it off from the page that opened it
     const url = this.view.webContents.getURL()
     if (url) this.opts.onToMain(url)
     this.win.close()

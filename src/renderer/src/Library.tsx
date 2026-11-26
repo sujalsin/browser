@@ -293,9 +293,12 @@ const PERMISSION_NAMES: Record<string, string> = {
   'idle-detection': 'Idle detection',
 }
 
+const SETTINGS_SECTIONS = ['General', 'Appearance', 'Tabs & Performance', 'Shields', 'Site Permissions', 'Privacy']
+const sectionId = (title: string) => `set-${title.toLowerCase().replace(/[^a-z]+/g, '-')}`
+
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="set-section">
+    <section className="set-section" id={sectionId(title)}>
       <h3>{title}</h3>
       <div className="set-card">{children}</div>
     </section>
@@ -341,6 +344,14 @@ function SettingsView({ state }: { state: UIState }) {
       <header className="lib-header">
         <h2>Settings</h2>
       </header>
+      {/* Jump to a section: the list is long. */}
+      <nav className="set-nav" aria-label="Sections">
+        {SETTINGS_SECTIONS.map((title) => (
+          <button key={title} className="set-chip" onClick={() => document.getElementById(sectionId(title))?.scrollIntoView({ block: 'start', behavior: 'smooth' })}>
+            {title}
+          </button>
+        ))}
+      </nav>
       <div className="lib-scroll settings">
         <Section title="General">
           <Row label="Search engine">
@@ -389,18 +400,23 @@ function SettingsView({ state }: { state: UIState }) {
 
         <Section title="Appearance">
           <Row label="Appearance" hint="Also applies to websites that have a dark mode.">
-            <select
-              className="lib-select"
-              value={s.appearance}
-              onChange={(e) => dispatch({ type: 'settings.update', patch: { appearance: e.target.value as 'system' | 'light' | 'dark' } })}
-            >
-              <option value="system">Match System</option>
-              <option value="light">Light</option>
-              <option value="dark">Dark</option>
-            </select>
+            <div className="segmented" role="radiogroup" aria-label="Appearance">
+              {(['system', 'light', 'dark'] as const).map((value) => (
+                <button
+                  key={value}
+                  role="radio"
+                  aria-checked={s.appearance === value}
+                  className={s.appearance === value ? 'on' : ''}
+                  onClick={() => dispatch({ type: 'settings.update', patch: { appearance: value } })}
+                >
+                  {value === 'system' ? 'System' : value === 'light' ? 'Light' : 'Dark'}
+                </button>
+              ))}
+            </div>
           </Row>
           {state.spaces.map((sp) => (
             <div key={sp.id} className="set-row space-theme">
+              <span className="space-preview" style={{ background: sp.gradient ? `linear-gradient(135deg, ${sp.color}, ${sp.gradient})` : sp.color }} />
               <div className="set-label">
                 <span>{sp.name}</span>
                 <small>{sp.gradient ? 'Gradient' : 'Color'}</small>

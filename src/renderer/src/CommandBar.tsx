@@ -189,6 +189,20 @@ export function CommandBar({ state }: { state: UIState }) {
             ))}
           </ul>
         )}
+        {results.length > 0 && (
+          <footer className="command-foot">
+            <span>
+              <kbd>↑</kbd>
+              <kbd>↓</kbd> to choose
+            </span>
+            <span>
+              <kbd>↵</kbd> to open
+            </span>
+            <span>
+              <kbd>esc</kbd> to close
+            </span>
+          </footer>
+        )}
       </div>
     </div>
   )
