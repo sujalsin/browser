@@ -1413,13 +1413,19 @@ kbd {
   z-index: 5;
 }
 
+/*
+ * The sidebar sliding in over the page. On its left it lies over the page's own
+ * rounded corners, so it starts one pixel outside the page with a corner one
+ * pixel rounder: the page can't show past it. Its free side, on the right, is
+ * rounder.
+ */
 .peek-panel {
   position: absolute;
-  top: var(--gap);
-  left: var(--gap);
-  bottom: var(--gap);
-  width: calc(var(--sidebar-width) - var(--gap));
-  border-radius: 14px;
+  top: calc(var(--gap) - 1px);
+  left: calc(var(--gap) - 1px);
+  bottom: calc(var(--gap) - 1px);
+  width: calc(var(--sidebar-width) - var(--gap) + 1px);
+  border-radius: calc(var(--radius-page) + 1px) 18px 18px calc(var(--radius-page) + 1px);
   background: var(--frame-bg);
   box-shadow: var(--shadow-float);
   overflow: hidden;
@@ -1431,9 +1437,13 @@ kbd {
   padding-left: 8px;
 }
 
-/* Full screen has no frame: the sidebar that slides in sits against the screen's edges, top to bottom. */
+/* Full screen has no frame: the sidebar that slides in sits against the screen's edge, top to bottom, like a drawer. */
 .fullscreen .peek-panel {
-  border-radius: 0;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: var(--sidebar-width);
+  border-radius: 0 18px 18px 0;
 }
 
 .fullscreen .peek-panel .sidebar {
