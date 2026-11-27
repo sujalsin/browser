@@ -2527,6 +2527,8 @@ export class BrowserShell {
         return this.passwords?.allowSaving(String(action.origin))
       case 'logins.import':
         return void this.passwords?.importFromFile(this.win)
+      case 'logins.export':
+        return void this.passwords?.exportToFile(this.win)
       case 'library.close':
         return this.closeLibrary()
       case 'download.act':

@@ -709,6 +709,11 @@ function PasswordsView({ state }: { state: UIState }) {
             Import…
           </button>
         )}
+        {data.available && data.logins.length > 0 && (
+          <button className="lib-button" title="A backup file of every saved password" onClick={() => dispatch({ type: 'logins.export' })}>
+            Export…
+          </button>
+        )}
       </header>
       <div className="lib-scroll">
         {!data.available ? (

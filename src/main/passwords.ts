@@ -1,6 +1,7 @@
-import { BrowserWindow, Menu, clipboard, dialog, ipcMain, safeStorage, shell as electronShell, systemPreferences, type IpcMainEvent, type WebContents, type WebFrameMain } from 'electron'
-import { readFile } from 'node:fs/promises'
-import { LOGINS, loginOrigin, parsePasswordCsv } from '../shared/passwords'
+import { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, safeStorage, shell as electronShell, systemPreferences, type IpcMainEvent, type WebContents, type WebFrameMain } from 'electron'
+import { readFile, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { LOGINS, loginOrigin, parsePasswordCsv, toPasswordCsv } from '../shared/passwords'
 import type { LoginInfo, LoginsOverview } from '../shared/types'
 import type { BrowserDB } from './db'
 
@@ -233,6 +234,47 @@ export class Passwords {
   }
 
   /** Pick a password file exported from Arc or Chrome and import it. */
+  /**
+   * A backup of every saved password, for the day the keychain key is gone
+   * (new Mac, keychain reset): without it, nothing can unlock what is stored
+   * here. The file is plain text, so it asks who you are first and says what
+   * to do with the file.
+   */
+  async exportToFile(window: BrowserWindow): Promise<void> {
+    if (!this.available()) return
+    const logins = this.db!.listLogins()
+    if (!logins.length) {
+      await dialog.showMessageBox(window, { type: 'info', message: 'There are no saved passwords to export' })
+      return
+    }
+    if (!(await this.confirmOwner('export your saved passwords'))) return
+    const go = await dialog.showMessageBox(window, {
+      type: 'warning',
+      buttons: ['Choose Where to Save…', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      message: `Export ${logins.length} password${logins.length === 1 ? '' : 's'} to a file?`,
+      detail:
+        'The file holds every password as plain text: anyone who can open it can read them.\n\n' +
+        'Use it to put them somewhere safe (import the file into Bitwarden, or keep it on an encrypted disk), then move the file to the Trash and empty the Trash. Don’t leave it in Downloads, Documents or a synced folder.',
+    })
+    if (go.response !== 0) return
+    const picked = await dialog.showSaveDialog(window, { title: 'Export Passwords', defaultPath: join(app.getPath('documents'), 'Browser Passwords.csv'), filters: [{ name: 'Password file', extensions: ['csv'] }] })
+    if (picked.canceled || !picked.filePath) return
+    try {
+      const rows: { origin: string; username: string; password: string }[] = []
+      for (const login of logins) {
+        const password = await this.decrypt(login.id)
+        if (password !== null) rows.push({ origin: login.origin, username: login.username, password })
+      }
+      // Readable by you only.
+      await writeFile(picked.filePath, toPasswordCsv(rows), { mode: 0o600 })
+      await dialog.showMessageBox(window, { type: 'info', message: `Exported ${rows.length} password${rows.length === 1 ? '' : 's'}`, detail: 'Remember to delete the file once the passwords are somewhere safe.' })
+    } catch (err) {
+      await dialog.showMessageBox(window, { type: 'error', message: 'The passwords couldn’t be exported', detail: err instanceof Error ? err.message : String(err) })
+    }
+  }
+
   async importFromFile(window: BrowserWindow): Promise<void> {
     if (!this.available()) {
       await dialog.showMessageBox(window, { type: 'warning', message: 'Passwords can’t be saved on this computer', detail: 'There is no keychain to encrypt them with.' })

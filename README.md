@@ -18,6 +18,10 @@ npm run dev
 `npm run dev` is for working on the browser. It runs a dev server, unminified React and extra
 checks, so it is noticeably slower. On the Intel Mac especially, use a built app day to day.
 
+Once the built app has run, `npm run dev` uses a profile of its own ("Browser Dev", empty at
+first). That is on purpose: the built app locks its cookies and a development copy cannot read
+them (see *Keep it secure*).
+
 ## Build an app for your Macs
 
 ```bash
@@ -229,6 +233,10 @@ keychain, and never synced anywhere.
   on the exact site it was saved for.
 - **Managing:** Library → Passwords: search, show, copy, delete. Show and Copy ask for Touch ID on
   Macs that have it; a copied password is cleared from the clipboard after a minute.
+- **Back them up:** Library → Passwords → *Export…* writes them to a file this browser, Chrome and
+  Bitwarden can read back. These passwords can only be unlocked with a key in this Mac's
+  keychain; if that key is ever gone (new Mac, keychain reset), the export is the only way back.
+  The file is plain text, so treat it as you would a list of passwords on paper.
 - **Import from Arc (or Chrome):** in Arc open `arc://password-manager/settings` → *Export
   passwords*, then Library → Passwords → *Import…* and pick that file. Let the browser move the file
   to the Trash afterwards: it holds every password as plain text.
@@ -309,6 +317,8 @@ trust** (unexpected email links, shady streaming or download sites).
   you choose one, and only on the exact site they were saved for. Showing or copying one asks for
   Touch ID. **A Mac without Touch ID has no such check**: anyone at the unlocked keyboard can
   open Library → Passwords and read them, so lock the screen when you step away.
+- **Sign-ins (cookies) are locked on disk** with the same keychain key, like in Chrome. A program
+  that copies the browser's files gets nothing it can use. See *The keychain key* below.
 - **Private windows** keep nothing on disk: no history, cookies, cache or site icons.
 - **The built app cannot be started in a debugging mode.** Other programs on the Mac cannot run
   it as a script engine, attach a debugger to it or open a remote-control port, which is how
@@ -323,15 +333,39 @@ trust** (unexpected email links, shady streaming or download sites).
   Gatekeeper checks apps, installers and scripts the first time you open them, but nothing warns
   about a dangerous file before that. To see the mark on a file:
   `xattr -p com.apple.quarantine ~/Downloads/NAME`.
-- **Cookies on disk are not encrypted.** The files that keep you signed in sit in
-  `~/Library/Application Support/Browser`. Any program you run can read them, and with them act
-  as you on those sites. (Chrome encrypts them, which stops simple thieves but not malware that
-  asks for your password.) Keep FileVault on, and don't run software you don't trust.
+- **Locked cookies stop file thieves, not everything.** Malware that gets you to type your Mac
+  password into its own window can ask the keychain for the key. Some sites also keep sign-in
+  tokens outside cookies, and those, like history and cache, are stored readable (in Chrome
+  too). Keep FileVault on, and don't run software you don't trust.
 - **Not signed by Apple.** The app has a local signature only, so macOS does not vouch for it and
   cannot notice if another program replaces it.
 - **Third-party cookies and fingerprinting** are not blocked beyond what Shields' lists catch.
 - **Extension support is unofficial** (it re-creates Chrome's extension system), so an extension
   may behave slightly differently than in Chrome. Keep the list short.
+
+### The keychain key
+
+The browser keeps exactly one thing in your macOS keychain: an entry called **Browser Safe
+Storage**. It holds the key that locks your cookies and the passwords saved in the browser. The
+browser creates and reads that one entry and nothing else; it cannot see or remove any other
+entry (Wi-Fi, other apps, iCloud Keychain), and it never deletes its own.
+
+- **macOS may ask for your Mac password** the first time a newly built copy opens ("Browser
+  wants to use your confidential information stored in Browser Safe Storage"). Enter it and
+  choose **Always Allow**. Each rebuild counts as a new app to macOS, so expect it again after
+  updating.
+- **If you choose Deny by mistake, nothing is lost.** Before opening any profile the browser
+  checks that it has the right key. Without it, it stops and offers *Quit*; open it again and
+  choose Always Allow. (Without this check the engine would throw away every sign-in it could
+  not unlock.)
+- **Don't delete "Browser Safe Storage"** in Keychain Access, and export your saved passwords
+  (Library → Passwords → *Export…*) before moving to a new Mac or resetting the keychain. A lost
+  key means signing in to sites again, and saved passwords that can't be read.
+- **Never go back to a build from before cookie locking** (anything older than this change), and
+  don't point one at this profile. A copy that cannot unlock the cookies deletes them all.
+  `npm run dev` is safe: it switches to its own profile by itself.
+- The first launch with locking writes the cookies you already had again, locked, before any
+  page loads. It takes a moment once per profile.
 
 ### What the browser contacts by itself
 

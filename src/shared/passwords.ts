@@ -86,6 +86,18 @@ export function parsePasswordCsv(text: string): { logins: ImportedLogin[]; skipp
 }
 
 /**
+ * The same kind of file, written: a backup of the saved passwords that this
+ * browser, Chrome, Arc and Bitwarden can all read back. Passwords are written
+ * exactly as they are (quoted where the format needs it).
+ */
+export function toPasswordCsv(logins: { origin: string; username: string; password: string }[]): string {
+  const cell = (value: string) => (/[",\r\n]/.test(value) || value !== value.trim() ? `"${value.replace(/"/g, '""')}"` : value)
+  const host = (origin: string) => origin.replace(/^https?:\/\//, '')
+  const lines = logins.map((l) => [host(l.origin), `${l.origin}/`, l.username, l.password].map(cell).join(','))
+  return ['name,url,username,password', ...lines].join('\n') + '\n'
+}
+
+/**
  * Which of a form's filled-in password fields holds the password to remember.
  * One field: that one. Sign-up and change-password forms repeat the new
  * password, so when the last two match it is the new one.

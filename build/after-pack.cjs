@@ -35,6 +35,11 @@ function vmpSign(appOutDir) {
  *   - --inspect and friends are ignored (no debugger can attach to the app)
  *   - the app's code is only ever loaded from its own archive
  *
+ * And one that protects what is stored: cookies (your signed-in sessions) are
+ * written to disk locked with a key from the macOS keychain. This one cannot be
+ * undone for a profile: a copy of the app without it throws away every locked
+ * cookie it finds. Never build with it switched off again.
+ *
  * This edits the engine itself, so it has to happen before the Widevine
  * signature below and before code-signing, both of which seal the result.
  */
@@ -46,6 +51,7 @@ async function harden(context) {
     [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
     [FuseV1Options.EnableNodeCliInspectArguments]: false,
     [FuseV1Options.OnlyLoadAppFromAsar]: true,
+    [FuseV1Options.EnableCookieEncryption]: true,
   })
 }
 

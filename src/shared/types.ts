@@ -380,6 +380,7 @@ export type Action =
   | { type: 'logins.delete'; id: number }
   | { type: 'logins.allowSaving'; origin: string }
   | { type: 'logins.import' }
+  | { type: 'logins.export' }
   | { type: 'little.navigate'; input: string }
   | { type: 'little.back' }
   | { type: 'little.forward' }

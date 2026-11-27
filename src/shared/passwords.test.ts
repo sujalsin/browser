@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { loginOrigin, parseCsv, parsePasswordCsv, passwordToSave } from './passwords'
+import { loginOrigin, parseCsv, parsePasswordCsv, passwordToSave, toPasswordCsv } from './passwords'
 
 describe('where a password belongs', () => {
   it('is the origin of an https page', () => {
@@ -77,6 +77,23 @@ describe('a password file from Arc or Chrome', () => {
   it('refuses a file that is not a password export', () => {
     expect(parsePasswordCsv('title,body\nhello,world\n')).toEqual({ logins: [], skipped: 1 })
     expect(parsePasswordCsv('')).toEqual({ logins: [], skipped: 0 })
+  })
+})
+
+describe('a backup of the saved passwords', () => {
+  const logins = [
+    { origin: 'https://example.com', username: 'sam@example.com', password: 'correct horse battery' },
+    { origin: 'https://shop.example.org', username: 'sam, the "boss"', password: ' lead,ing "quote"\nnew line ' },
+    { origin: 'http://localhost:3000', username: '', password: '=SUM(1)' },
+  ]
+  it('reads back exactly what was written, awkward characters included', () => {
+    expect(parsePasswordCsv(toPasswordCsv(logins))).toEqual({ logins: [logins[0], { ...logins[1], username: 'sam, the "boss"' }, logins[2]], skipped: 0 })
+  })
+  it('is the layout Chrome, Arc and Bitwarden import', () => {
+    expect(toPasswordCsv([logins[0]])).toBe('name,url,username,password\nexample.com,https://example.com/,sam@example.com,correct horse battery\n')
+  })
+  it('an empty list is just the heading', () => {
+    expect(toPasswordCsv([])).toBe('name,url,username,password\n')
   })
 })
 

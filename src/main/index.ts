@@ -10,6 +10,8 @@ import { attachIdentityHeaders } from './identity'
 import { QUARANTINE_ATTRIBUTE, quarantineValue } from '../shared/quarantine'
 import { fromInterface } from './interface-guard'
 import { EngineCheck } from './engine-check'
+import { KEY_FILE } from './key-check'
+import { KeyGuard } from './key-guard'
 import { isOpenableLink } from '../shared/interface-url'
 import { setupExtensions } from './extensions'
 import { installMenu } from './menu'
@@ -22,6 +24,15 @@ import { Shields } from './shields'
 import { flushState, loadState } from './store'
 
 app.setName('Browser')
+
+// The built app locks its cookies with a key from the keychain. A development
+// copy (`npm run dev`) has no such lock, and the engine throws away every
+// locked cookie it cannot read. So once the built app has locked this profile,
+// a development copy keeps to a profile of its own.
+if (!app.isPackaged && !app.commandLine.hasSwitch('user-data-dir') && existsSync(join(app.getPath('userData'), KEY_FILE))) {
+  app.setPath('userData', join(app.getPath('appData'), 'Browser Dev'))
+  console.warn('Development copy: using the separate profile "Browser Dev". Your everyday profile belongs to the built app and is left alone.')
+}
 
 // Some sites turn away a browser whose user agent names a product they don't
 // know, so pages get a plain Chrome-style one. Google's sign-in is the reverse:
@@ -170,6 +181,14 @@ function applyH264(partition: string, on: boolean) {
 }
 
 async function start() {
+  // Before any profile is opened: is the key that locks sign-ins and saved
+  // passwords available, and the same as before? If not, stop here, where
+  // nothing can be lost yet (see key-check.ts).
+  const keyGuard = new KeyGuard()
+  if (!(await keyGuard.open())) {
+    app.quit()
+    return
+  }
   const state = loadState()
   // Light/dark for the browser UI and for pages that support it.
   nativeTheme.themeSource = state.settings.appearance
@@ -214,7 +233,13 @@ async function start() {
       applyH264(partition, (shell?.settings ?? state.settings).preferH264)
       shields.attach(session.fromPartition(partition))
       // Private browsing runs without extensions, like Chrome's incognito.
-      ready = opts.private ? Promise.resolve() : setupExtensions(partition).catch((err) => console.error('Extension setup failed:', err))
+      ready = opts.private
+        ? Promise.resolve()
+        : // One time per profile: lock the cookies that were stored before locking existed.
+          keyGuard
+            .protect(partition, session.fromPartition(partition))
+            .then(() => setupExtensions(partition))
+            .catch((err) => console.error('Extension setup failed:', err))
       prepared.set(partition, ready)
     }
     return ready
