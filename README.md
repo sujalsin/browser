@@ -250,15 +250,106 @@ here.
 
 ## Keep it secure
 
-Chromium security fixes reach this browser through Electron releases. Check at least monthly at
-https://github.com/castlabs/electron-releases/releases for a newer `+wvcus` version (the
-Widevine-enabled build; it usually follows official Electron by a few days) and install it:
+No browser is leak-proof, and a browser you build yourself has weak points the big ones don't.
+This is what is in place, what is not, and what to do about it.
+
+### The one thing that matters most: engine updates
+
+Websites are kept away from your files, and from each other, by the engine (Chromium). Chromium
+fixes security holes every week or two; Chrome and Arc install those fixes by themselves. **This
+browser only gets them when you rebuild it on a newer engine.** A copy that is months old can be
+taken over by a malicious page or ad using a hole that is already public.
+
+The browser looks once a day for a newer engine. When there is one, an orange shield appears at
+the bottom of the sidebar and Settings → Security shows what to run:
 
 ```bash
-npm install "https://github.com/castlabs/electron-releases#v45.2.1+wvcus" --save-dev
+git pull
 ```
 
-(with the new version number in place of `45.2.1`), then build again.
+```bash
+npm run engine:update
+```
+
+```bash
+npm run dist:mac:arm64
+```
+
+(`npm run dist:mac:x64` on the Intel Mac), then replace the app with the new one from `dist/`.
+`npm run engine:update` moves to the newest release of the engine line you are on, which is the
+low-risk step. When that line stops receiving fixes, Settings says so and the command becomes
+`npm run engine:update -- --latest`; a new line can need small code changes, so run `npm test`
+after it.
+
+The engine comes from https://github.com/castlabs/electron-releases (the build with Widevine).
+It follows official Electron, sometimes by days and sometimes by weeks, so even an up-to-date copy
+of this browser can be behind Chrome. For that reason, **use Chrome or Safari for links you don't
+trust** (unexpected email links, shady streaming or download sites).
+
+### What protects you
+
+- **Every page is sandboxed and isolated** from the browser and from other sites, the same way
+  as in Chrome. Pages get no access to your files or to the browser's controls.
+- **The browser's own interface cannot be replaced by a web page.** The sidebar, command bar,
+  Library and find bar refuse to navigate, open windows or embed pages, and the controls behind
+  them answer only to the interface's own file.
+- **Broken or forged certificates are refused**; there is no "proceed anyway".
+- **Permissions are asked per site** (camera, microphone, location, notifications, clipboard,
+  screen recording, display layout) and remembered; everything not on that list is refused.
+- **Links that open other apps** (`zoommtg:`, `slack:`, `mailto:` …) are refused when they come
+  from a page, and links handed over by other apps are only opened if they are web addresses.
+- **Extensions**: only from the Chrome Web Store, and adding one first shows what it will be able
+  to read. Private windows run without extensions.
+- **Saved passwords** are stored encrypted with a key in the macOS keychain, filled in only after
+  you choose one, and only on the exact site they were saved for. Showing or copying one asks for
+  Touch ID. **A Mac without Touch ID has no such check**: anyone at the unlocked keyboard can
+  open Library → Passwords and read them, so lock the screen when you step away.
+- **Private windows** keep nothing on disk: no history, cookies, cache or site icons.
+- **The built app cannot be started in a debugging mode.** Other programs on the Mac cannot run
+  it as a script engine, attach a debugger to it or open a remote-control port, which is how
+  malware borrows a browser's keychain and camera access.
+
+### What it does not have
+
+- **No Safe Browsing.** Chrome and Arc warn before known phishing and malware pages. This browser
+  does not. Shields blocks many bad domains, but that is not the same thing. Check the address
+  before typing a password; Bitwarden refusing to offer a login is a good sign you are on a fake.
+- **No download scanning.** Every download is marked as coming from the internet, so macOS
+  Gatekeeper checks apps, installers and scripts the first time you open them, but nothing warns
+  about a dangerous file before that. To see the mark on a file:
+  `xattr -p com.apple.quarantine ~/Downloads/NAME`.
+- **Cookies on disk are not encrypted.** The files that keep you signed in sit in
+  `~/Library/Application Support/Browser`. Any program you run can read them, and with them act
+  as you on those sites. (Chrome encrypts them, which stops simple thieves but not malware that
+  asks for your password.) Keep FileVault on, and don't run software you don't trust.
+- **Not signed by Apple.** The app has a local signature only, so macOS does not vouch for it and
+  cannot notice if another program replaces it.
+- **Third-party cookies and fingerprinting** are not blocked beyond what Shields' lists catch.
+- **Extension support is unofficial** (it re-creates Chrome's extension system), so an extension
+  may behave slightly differently than in Chrome. Keep the list short.
+
+### What the browser contacts by itself
+
+Nothing about your browsing is reported anywhere. Without you asking, it only fetches:
+
+- filter lists for Shields (GitHub),
+- the daily engine check (GitHub; can be switched off in Settings → Security),
+- Widevine, the protected-video component (Google's update servers),
+- updates for the extensions you installed (Chrome Web Store),
+- the icons of sites you have open.
+
+Translation sends a page's text to Google Translate only when you ask for it. What you type in
+the address bar is matched against your own history on this Mac; nothing is sent until you
+press Enter.
+
+### For work
+
+- Give work its own profile (a space with its own cookies) so work and personal sign-ins never
+  mix, and keep work passwords in Bitwarden.
+- If your employer manages your Mac or requires an approved browser, this one will not qualify:
+  it has no management, no enforced updates and no audit trail. Ask before using it for
+  anything covered by a security policy.
+- Lock the screen when you walk away; anyone at the keyboard has your open sessions.
 
 ## Project layout
 

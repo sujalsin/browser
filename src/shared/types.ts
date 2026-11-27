@@ -1,3 +1,4 @@
+import type { EngineInfo } from './engine'
 // State shared between the main process (source of truth) and the UI.
 
 export interface Space {
@@ -207,6 +208,8 @@ export interface Settings {
   autoPip: boolean
   /** Offer to save passwords you type into sign-in forms. */
   savePasswords: boolean
+  /** Look once a day for a newer engine (Chromium security fixes). */
+  checkEngineUpdates: boolean
 }
 
 /** What the UI receives. */
@@ -244,6 +247,8 @@ export interface UIState extends PersistedState {
   hoverUrl: string
   /** Goes up whenever the saved passwords change. */
   loginsRev: number
+  /** A newer engine worth rebuilding on (e.g. "45.3.0"), or null. */
+  engineUpdate: string | null
 }
 
 /** One row in the Task Manager. */
@@ -405,6 +410,7 @@ export type Query =
   | { type: 'app.info' }
   | { type: 'tasks.list' }
   | { type: 'logins.list' }
+  | { type: 'engine.check' }
   /** The password itself, after the Mac's owner has confirmed (Touch ID where there is one). */
   | { type: 'logins.reveal'; id: number }
 
@@ -417,6 +423,8 @@ export interface AppInfo {
   historyCount: number
   /** Widevine version if protected video (Netflix, Spotify…) can play, else null. */
   widevine: string | null
+  /** What is known about newer engines. */
+  engine: EngineInfo
 }
 
 export const IPC = {

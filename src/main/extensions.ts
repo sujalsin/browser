@@ -1,6 +1,7 @@
-import { session } from 'electron'
+import { dialog, session } from 'electron'
 import { ElectronChromeExtensions } from 'electron-chrome-extensions'
 import { installChromeWebStore } from 'electron-chrome-web-store'
+import { describeExtensionAccess } from '../shared/extension-access'
 import type { BrowserShell } from './shell'
 
 const bySession = new Map<string, ElectronChromeExtensions>()
@@ -8,6 +9,23 @@ let shell: BrowserShell | null = null
 
 export function setExtensionsShell(s: BrowserShell): void {
   shell = s
+}
+
+/** Ask before an extension gets access. Nothing is granted unless you press the confirm button. */
+async function confirmAccess(message: string, access: string[], confirm: string): Promise<boolean> {
+  const options: Electron.MessageBoxOptions = {
+    type: 'warning',
+    buttons: [confirm, 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    message,
+    detail:
+      (access.length ? `It will be able to:\n${access.map((line) => `• ${line}`).join('\n')}` : 'It asks for no access to your websites.') +
+      '\n\nOnly add extensions you trust: one with access to your websites can see everything you do there.',
+  }
+  const win = shell && !shell.win.isDestroyed() ? shell.win : null
+  const { response } = win ? await dialog.showMessageBox(win, options) : await dialog.showMessageBox(options)
+  return response === 0
 }
 
 function requireShell(): BrowserShell {
@@ -44,9 +62,9 @@ export function getExtensions(partition: string): ElectronChromeExtensions {
       const id = s.tabIdForWebContents(wc)
       if (id) s.removeTab(id)
     },
-    async requestPermissions() {
-      // Extensions only come from the Web Store, installed by you.
-      return true
+    async requestPermissions(extension, permissions) {
+      // An installed extension asking for more than it was installed with.
+      return confirmAccess(`"${extension.name}" wants more access`, describeExtensionAccess(permissions), 'Allow')
     },
   })
   bySession.set(partition, extensions)
@@ -60,5 +78,13 @@ export function getExtensions(partition: string): ElectronChromeExtensions {
  */
 export async function setupExtensions(partition: string): Promise<void> {
   getExtensions(partition)
-  await installChromeWebStore({ session: session.fromPartition(partition) })
+  await installChromeWebStore({
+    session: session.fromPartition(partition),
+    // "Add to Chrome" on the Web Store: say what the extension will be able to
+    // do and ask first, as Chrome does.
+    beforeInstall: async ({ localizedName, manifest }) => {
+      const ok = await confirmAccess(`Add "${localizedName || manifest?.name || 'this extension'}"?`, describeExtensionAccess(manifest), 'Add Extension')
+      return { action: ok ? 'allow' : 'deny' }
+    },
+  })
 }

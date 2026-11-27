@@ -56,6 +56,10 @@ import type { BrowserDB } from './db'
 import type { Downloads } from './downloads'
 import { forgetPartitionPermissions, forgetPermission } from './permissions'
 import { pagePreferences } from './page-prefs'
+import { lockInterface } from './interface-guard'
+import type { EngineCheck } from './engine-check'
+import { engineUpdateDue } from '../shared/engine'
+import { isOpenableLink } from '../shared/interface-url'
 import type { Passwords } from './passwords'
 import { WINDOW_BUTTONS, windowButtons } from '../shared/window-buttons'
 import { LittleWindow } from './little'
@@ -100,6 +104,24 @@ interface OpenOptions {
  * WebContentsView laid over the content area. The command bar is a transparent
  * overlay view on top of everything.
  */
+/** A private tab's site icon as a `data:` picture, downloaded inside its own (in-memory) profile. */
+async function privateIcon(wc: WebContents, address: string | undefined): Promise<string | undefined> {
+  if (!address) return undefined
+  if (address.startsWith('data:image/')) return address.length <= PRIVATE_ICON_MAX * 1.4 ? address : undefined
+  if (!/^https?:/i.test(address)) return undefined
+  try {
+    const res = await wc.session.fetch(address, { credentials: 'omit', signal: AbortSignal.timeout(8000) })
+    const type = (res.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase()
+    if (!res.ok || !type.startsWith('image/')) return undefined
+    const bytes = Buffer.from(await res.arrayBuffer())
+    if (!bytes.length || bytes.length > PRIVATE_ICON_MAX) return undefined
+    return `data:${type};base64,${bytes.toString('base64')}`
+  } catch {
+    return undefined
+  }
+}
+const PRIVATE_ICON_MAX = 150_000
+
 export class BrowserShell {
   readonly win: BrowserWindow
   private overlay: WebContentsView | null = null
@@ -158,6 +180,13 @@ export class BrowserShell {
   passwords: Passwords | null = null
   /** Goes up whenever the saved passwords change, so the Passwords screen knows to ask again. */
   private loginsRev = 0
+
+  /** Reports when a newer engine (Chromium security fixes) is available. */
+  engine: EngineCheck | null = null
+
+  engineChanged() {
+    this.emit(false)
+  }
 
   attachPasswords(passwords: Passwords) {
     this.passwords = passwords
@@ -221,6 +250,7 @@ export class BrowserShell {
       },
     })
 
+    lockInterface(this.win.webContents, this.rendererUrl)
     this.win.loadURL(this.rendererUrl)
     this.win.once('ready-to-show', () => this.win.show())
     this.win.on('resize', () => this.layout())
@@ -327,6 +357,7 @@ export class BrowserShell {
       auth: this.authQueue[0] ? { host: this.authQueue[0].host, realm: this.authQueue[0].realm, isProxy: this.authQueue[0].isProxy } : null,
       hoverUrl: this.hoverUrl,
       loginsRev: this.loginsRev,
+      engineUpdate: this.engine ? engineUpdateDue(this.engine.info) : null,
     }
   }
 
@@ -617,6 +648,20 @@ export class BrowserShell {
       if (isWebUrl(url)) history((db) => db.setTitle(url, title))
     })
     wc.on('page-favicon-updated', (_e, favicons) => {
+      if (isPrivateTab(this.state, this.tab(id))) {
+        // The sidebar downloads icons with the interface's own, permanent
+        // profile, which would leave a trace of the site on disk. For a
+        // private tab the icon is fetched inside the private profile instead
+        // and handed to the sidebar as the picture itself.
+        const address = favicons[0]
+        icon = undefined
+        void privateIcon(wc, address).then((picture) => {
+          if (!picture || wc.isDestroyed() || !isWebUrl(wc.getURL())) return
+          icon = picture
+          update({ favicon: picture })
+        })
+        return
+      }
       icon = favicons[0]
       const url = wc.getURL()
       update({ favicon: isWebUrl(url) ? icon : undefined })
@@ -1429,6 +1474,7 @@ export class BrowserShell {
       },
     })
     overlay.setBackgroundColor('#00000000')
+    lockInterface(overlay.webContents, this.rendererUrl)
     void overlay.webContents.loadURL(`${this.rendererUrl}#overlay`)
     overlay.webContents.on('did-finish-load', () => this.emitNow())
     this.overlay = overlay
@@ -1533,7 +1579,7 @@ export class BrowserShell {
           this.emit(false)
         },
       },
-      { label: 'Open in Default Browser', click: () => void electronShell.openExternal(tab.url) },
+      { label: 'Open in Default Browser', enabled: isOpenableLink(tab.url), click: () => isOpenableLink(tab.url) && void electronShell.openExternal(tab.url) },
       { type: 'separator' },
       {
         label: 'Put Tab to Sleep',
@@ -2121,6 +2167,7 @@ export class BrowserShell {
         webPreferences: { preload: join(__dirname, '../preload/index.js'), sandbox: true, contextIsolation: true, nodeIntegration: false },
       })
       view.setBackgroundColor('#00000000')
+      lockInterface(view.webContents, this.rendererUrl)
       void view.webContents.loadURL(`${this.rendererUrl}#find`)
       view.webContents.on('did-finish-load', () => this.emitNow())
       this.findView = view
@@ -2228,6 +2275,7 @@ export class BrowserShell {
     if (typeof patch.translateTo === 'string' && patch.translateTo in LANGUAGES) clean.translateTo = patch.translateTo
     if (typeof patch.autoPip === 'boolean') clean.autoPip = patch.autoPip
     if (typeof patch.savePasswords === 'boolean') clean.savePasswords = patch.savePasswords
+    if (typeof patch.checkEngineUpdates === 'boolean') clean.checkEngineUpdates = patch.checkEngineUpdates
     if (Object.keys(clean).length) this.updateSettings(clean)
   }
 
@@ -2358,6 +2406,8 @@ export class BrowserShell {
         return this.db?.listPermissions() ?? []
       case 'tasks.list':
         return this.tasks()
+      case 'engine.check':
+        return this.engine?.check(true) ?? null
       case 'logins.list':
         return this.passwords?.overview() ?? { available: false, logins: [], never: [] }
       case 'logins.reveal':
@@ -2371,6 +2421,7 @@ export class BrowserShell {
           arcFound: existsSync(ARC_SIDEBAR_FILE),
           historyCount: this.db?.historyCount() ?? 0,
           widevine: widevineVersion(),
+          engine: this.engine?.info ?? { update: null, nextLine: null, supported: true, checkedAt: null },
         }
         return info
       }

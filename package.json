@@ -14,7 +14,8 @@
     "test": "vitest run",
     "dist:mac": "electron-vite build && electron-builder --mac --universal",
     "dist:mac:arm64": "electron-vite build && electron-builder --mac --arm64",
-    "dist:mac:x64": "electron-vite build && electron-builder --mac --x64"
+    "dist:mac:x64": "electron-vite build && electron-builder --mac --x64",
+    "engine:update": "node scripts/update-engine.mjs"
   },
   "dependencies": {
     "@ghostery/adblocker": "^2.20.3",

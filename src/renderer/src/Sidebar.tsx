@@ -287,6 +287,15 @@ export function Sidebar({ state }: { state: UIState }) {
                 <Icon name="archive" />
               </button>
               <DownloadsButton state={state} />
+              {state.engineUpdate && (
+                <button
+                  className="icon-btn engine-btn"
+                  title={`Security update available (engine ${state.engineUpdate}). Click for how to install it.`}
+                  onClick={() => dispatch({ type: 'library.open', tab: 'settings' })}
+                >
+                  <Icon name="update" size={15} />
+                </button>
+              )}
               <SpaceSwitcher state={state} />
               <button className="icon-btn" title="New space" onClick={() => dispatch({ type: 'space.addMenu' })}>
                 <Icon name="plus" size={15} />

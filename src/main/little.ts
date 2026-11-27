@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { IPC, type LittleState, type SearchEngineId } from '../shared/types'
 import { resolveInput } from '../shared/url'
 import { pagePreferences } from './page-prefs'
+import { lockInterface } from './interface-guard'
 
 const TOOLBAR = 44
 const GAP = 6
@@ -97,6 +98,7 @@ export class LittleWindow {
       if (popup) wc.focus()
       else if (!url) this.win.webContents.focus()
     })
+    lockInterface(this.win.webContents, opts.rendererUrl)
     void this.win.loadURL(`${opts.rendererUrl}#little`)
     this.layout()
     if (url) void wc.loadURL(url).catch(() => {})

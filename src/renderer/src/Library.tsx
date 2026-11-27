@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { normalizeDomain } from '../../shared/boosts'
 import { SPACE_COLORS } from '../../shared/constants'
+import { engineUpdateDue } from '../../shared/engine'
 import { LANGUAGES } from '../../shared/translate'
 import type { AppInfo, Boost, DownloadInfo, HistoryItem, LibraryTab, LoginsOverview, SearchEngineId, SitePermission, TaskInfo, UIState } from '../../shared/types'
 import { SEARCH_ENGINES, displayHost } from '../../shared/url'
@@ -293,9 +294,10 @@ const PERMISSION_NAMES: Record<string, string> = {
   midi: 'MIDI devices',
   midiSysex: 'MIDI devices',
   'idle-detection': 'Idle detection',
+  'window-management': 'Displays & window placement',
 }
 
-const SETTINGS_SECTIONS = ['General', 'Appearance', 'Tabs & Performance', 'Shields', 'Site Permissions', 'Privacy']
+const SETTINGS_SECTIONS = ['General', 'Appearance', 'Tabs & Performance', 'Shields', 'Site Permissions', 'Privacy', 'Security']
 const sectionId = (title: string) => `set-${title.toLowerCase().replace(/[^a-z]+/g, '-')}`
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -321,6 +323,59 @@ function Row({ label, hint, children }: { label: string; hint?: string; children
 
 function Toggle({ on, onChange, label }: { on: boolean; onChange(v: boolean): void; label: string }) {
   return <button role="switch" aria-checked={on} aria-label={label} className={`toggle ${on ? 'on' : ''}`} onClick={() => onChange(!on)} />
+}
+
+function ago(ms: number): string {
+  const minutes = Math.round((Date.now() - ms) / 60_000)
+  if (minutes < 2) return 'just now'
+  if (minutes < 90) return `${minutes} minutes ago`
+  const hours = Math.round(minutes / 60)
+  return hours < 36 ? `${hours} hours ago` : `${Math.round(hours / 24)} days ago`
+}
+
+/**
+ * The engine (Chromium) is where security fixes land, and this browser only
+ * gets them when it is rebuilt. Says whether that is due, and how to do it.
+ */
+function EngineRow({ info, onChecked }: { info: AppInfo | null; onChecked(info: AppInfo): void }) {
+  const [busy, setBusy] = useState(false)
+  if (!info) return null
+  const engine = info.engine
+  const due = engineUpdateDue(engine)
+  const newLine = !!due && !engine.update
+  const status = due
+    ? newLine
+      ? `Your engine line no longer receives security fixes. Update to ${due}.`
+      : `Security update available: ${due}. You are on ${info.electron.replace(/\+.*/, '')}.`
+    : engine.checkedAt
+      ? `Up to date · checked ${ago(engine.checkedAt)}${engine.nextLine ? ` · a newer line (${engine.nextLine}) exists; yours still gets fixes` : ''}`
+      : 'Not checked yet'
+  const check = () => {
+    setBusy(true)
+    void window.browser
+      .query({ type: 'engine.check' })
+      .then(() => window.browser.query<AppInfo>({ type: 'app.info' }))
+      .then((next) => next && onChecked(next))
+      .finally(() => setBusy(false))
+  }
+  return (
+    <>
+      <Row label={`Engine: Chromium ${info.chrome.split('.')[0]}`} hint={status}>
+        <button className="lib-button" disabled={busy} onClick={check}>
+          {busy ? 'Checking…' : 'Check Now'}
+        </button>
+      </Row>
+      {due && (
+        <div className="set-steps">
+          <p>Websites are kept away from your files and from each other by the engine, and its fixes only reach this browser when you rebuild it. In Terminal, in the project folder:</p>
+          <code>git pull</code>
+          <code>{newLine ? 'npm run engine:update -- --latest' : 'npm run engine:update'}</code>
+          <code>npm run dist:mac:arm64</code>
+          <p>(on the Intel Mac the last line is <b>npm run dist:mac:x64</b>), then replace the app with the new one from the dist folder.</p>
+        </div>
+      )}
+    </>
+  )
 }
 
 function SettingsView({ state }: { state: UIState }) {
@@ -579,6 +634,13 @@ function SettingsView({ state }: { state: UIState }) {
             <button className="lib-button" onClick={() => dispatch({ type: 'library.open', tab: 'history' })}>
               Open History
             </button>
+          </Row>
+        </Section>
+
+        <Section title="Security">
+          <EngineRow info={info} onChecked={setInfo} />
+          <Row label="Look for engine updates daily" hint="One anonymous request a day to GitHub, where the engine is published. Nothing about you or your browsing is sent.">
+            <Toggle label="Look for engine updates daily" on={s.checkEngineUpdates} onChange={(v) => dispatch({ type: 'settings.update', patch: { checkEngineUpdates: v } })} />
           </Row>
         </Section>
 

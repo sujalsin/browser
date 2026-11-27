@@ -11,6 +11,11 @@ const CSP = [
   // Favicons come from any site; extension icons from crx://.
   "img-src 'self' data: https: http: crx:",
   "connect-src 'self'",
+  // The interface never embeds pages, plugins or forms that post elsewhere.
+  "frame-src 'none'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
 ].join('; ')
 
 const cspPlugin = (): Plugin => ({

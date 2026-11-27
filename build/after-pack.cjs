@@ -22,7 +22,36 @@ function vmpSign(appOutDir) {
   return false
 }
 
+/**
+ * Switch off the ways another program on this computer could start the app's
+ * own engine and make it run that program's code instead. Such code would run
+ * under this app's name: macOS would hand it the keychain entry that protects
+ * the saved passwords, and the camera/microphone permission given to the
+ * browser. These switches are baked into the app and cannot be turned back on
+ * from outside:
+ *
+ *   - no "run as plain Node.js" mode (ELECTRON_RUN_AS_NODE)
+ *   - NODE_OPTIONS is ignored
+ *   - --inspect and friends are ignored (no debugger can attach to the app)
+ *   - the app's code is only ever loaded from its own archive
+ *
+ * This edits the engine itself, so it has to happen before the Widevine
+ * signature below and before code-signing, both of which seal the result.
+ */
+async function harden(context) {
+  const { FuseVersion, FuseV1Options } = await import('@electron/fuses')
+  await context.packager.addElectronFuses(context, {
+    version: FuseVersion.V1,
+    [FuseV1Options.RunAsNode]: false,
+    [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
+    [FuseV1Options.EnableNodeCliInspectArguments]: false,
+    [FuseV1Options.OnlyLoadAppFromAsar]: true,
+  })
+}
+
 exports.default = async function afterPack(context) {
+  // Every pass, including both halves of a universal build.
+  await harden(context)
   if (context.electronPlatformName !== 'darwin') return
   const appPath = join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`)
 

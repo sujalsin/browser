@@ -12,7 +12,6 @@ const ALWAYS_ALLOW = new Set([
   'pointerLock',
   'keyboardLock',
   'speaker-selection',
-  'window-management',
   // Embedded widgets (reCAPTCHA, sign-in buttons, video players) ask for their
   // own cookies. This browser doesn't block third-party cookies, so they
   // already have that access and a prompt would change nothing; Chrome doesn't
@@ -30,6 +29,8 @@ const ASK: Record<string, string> = {
   midi: 'use MIDI devices',
   midiSysex: 'use MIDI devices',
   'idle-detection': 'know when you are idle',
+  // Reveals every display you have and lets the site place windows on any of them.
+  'window-management': 'see all your displays and place windows on them',
 }
 
 /** Remembered decisions: "partition|origin|permission" → allowed. */

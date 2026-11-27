@@ -1,3 +1,5 @@
+import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { app, components, ipcMain, nativeTheme, session } from 'electron'
 import { existsSync } from 'node:fs'
 import { join, parse } from 'node:path'
@@ -5,6 +7,10 @@ import { ElectronChromeExtensions } from 'electron-chrome-extensions'
 import { IPC, type Action, type PersistedState, type Query } from '../shared/types'
 import { chromeUserAgent } from '../shared/identity'
 import { attachIdentityHeaders } from './identity'
+import { QUARANTINE_ATTRIBUTE, quarantineValue } from '../shared/quarantine'
+import { fromInterface } from './interface-guard'
+import { EngineCheck } from './engine-check'
+import { isOpenableLink } from '../shared/interface-url'
 import { setupExtensions } from './extensions'
 import { installMenu } from './menu'
 import { Downloads } from './downloads'
@@ -34,6 +40,16 @@ app.userAgentFallback = chromeUserAgent(OWN_USER_AGENT)
 //   opens Google's sign-in window instead.
 app.commandLine.appendSwitch('disable-features', 'FedCm')
 
+// A built copy of the app never opens a debugging door. Started with one of
+// these switches (which any program on this computer could do), Chromium
+// would let that program drive every tab and read every signed-in session.
+// The development copy keeps them: the automated tests rely on them.
+if (app.isPackaged) {
+  for (const name of ['remote-debugging-port', 'remote-debugging-pipe', 'remote-debugging-address', 'remote-debugging-targets', 'remote-allow-origins']) {
+    app.commandLine.removeSwitch(name)
+  }
+}
+
 let shell: BrowserShell | null = null
 let db: BrowserDB | null = null
 let extensionsReady = false
@@ -59,14 +75,15 @@ if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
   app.on('second-instance', (_e, argv) => {
-    const url = argv.find((a) => /^https?:\/\//.test(a))
+    const url = argv.find(isOpenableLink)
     if (url) openExternalUrl(url)
     else shell?.win.focus()
   })
   // macOS: links opened from other apps when this is the default browser.
   app.on('open-url', (event, url) => {
     event.preventDefault()
-    openExternalUrl(url)
+    // Other apps can hand over anything; only ordinary web addresses are opened.
+    if (isOpenableLink(url)) openExternalUrl(url)
   })
   // Password-protected sites and proxies: without this, Electron just fails the request.
   app.on('login', (event, _wc, _details, authInfo, callback) => {
@@ -101,7 +118,25 @@ function setupSession(partition: string, downloads: Downloads, isPrivate: boolea
     const path = uniquePath(app.getPath('downloads'), item.getFilename())
     item.setSavePath(path)
     downloads.track(item, path, isPrivate)
-    item.once('done', () => reservedPaths.delete(path))
+    item.once('done', (_event, state) => {
+      reservedPaths.delete(path)
+      if (state === 'completed') markDownloaded(path)
+    })
+  })
+}
+
+/**
+ * Mark a finished download as "came from the internet", so macOS checks it
+ * (Gatekeeper) the first time it is opened. Left alone if the mark is already
+ * there. A failure here must never get in the way of the download itself.
+ */
+function markDownloaded(path: string) {
+  if (process.platform !== 'darwin') return
+  execFile('/usr/bin/xattr', ['-p', QUARANTINE_ATTRIBUTE, path], (missing) => {
+    if (!missing) return
+    execFile('/usr/bin/xattr', ['-w', QUARANTINE_ATTRIBUTE, quarantineValue(Date.now(), randomUUID()), path], (err) => {
+      if (err) console.warn('Could not mark the download for Gatekeeper:', err.message)
+    })
   })
 }
 
@@ -154,6 +189,12 @@ async function start() {
   downloads.onChange = () => shell?.downloadsChanged()
   downloads.onRetry = (url) => shell?.activeWebContents()?.downloadURL(url)
   const passwords = new Passwords(db)
+  // Tells you when the engine has security fixes this copy does not have yet.
+  const engine = new EngineCheck(
+    () => (shell?.settings ?? state.settings).checkEngineUpdates,
+    () => shell?.engineChanged(),
+  )
+  engine.start()
 
   // Shields read settings from whichever window state is current.
   const shields = new Shields(() => (shell ? shell.shieldsSettings : state.shields))
@@ -180,16 +221,18 @@ async function start() {
   }
   const startupSessions = [...new Set(state.spaces.map((sp) => sp.partition))].map((p) => prepareSession(p))
 
+  // The interface's controls answer only to the interface: the right view AND,
+  // inside it, our own document (see interface-guard.ts).
   ipcMain.handle(IPC.getState, (event) => {
-    if (!shell || !shell.isUIWebContents(event.sender)) return null
+    if (!shell || !shell.isUIWebContents(event.sender) || !fromInterface(event, rendererUrl)) return null
     return shell.snapshot()
   })
   ipcMain.handle(IPC.query, (event, q: Query) => {
-    if (!shell || !shell.isUIWebContents(event.sender) || !q || typeof q.type !== 'string') return null
+    if (!shell || !shell.isUIWebContents(event.sender) || !fromInterface(event, rendererUrl) || !q || typeof q.type !== 'string') return null
     return shell.query(q)
   })
   ipcMain.on(IPC.action, (event, action: Action) => {
-    if (!shell || !action || typeof action !== 'object' || typeof action.type !== 'string') return
+    if (!shell || !fromInterface(event, rendererUrl) || !action || typeof action !== 'object' || typeof action.type !== 'string') return
     const little = shell.littleFor(event.sender)
     if (little) return shell.handleLittleAction(little, action)
     if (!shell.isUIWebContents(event.sender)) return
@@ -202,6 +245,7 @@ async function start() {
     created.db = db
     created.downloads = downloads
     created.attachPasswords(passwords)
+    created.engine = engine
     created.prepareSession = prepareSession
     created.onSettingsChanged = (settings) => {
       nativeTheme.themeSource = settings.appearance

@@ -38,6 +38,7 @@ function defaultState(): PersistedState {
       translateTo: targetFromLocale(app.getLocale() || 'en'),
       autoPip: true,
       savePasswords: true,
+      checkEngineUpdates: true,
     },
     shields: {
       enabled: true,
