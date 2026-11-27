@@ -1,4 +1,5 @@
-import { BrowserWindow, dialog, type Session } from 'electron'
+import { app, BrowserWindow, dialog, type Session, type WebContents } from 'electron'
+import { APP_LINK_PERMISSION, appLinkPermission, appLinkScheme, showAppLink } from '../shared/app-links'
 import type { SitePermission } from '../shared/types'
 import type { BrowserDB } from './db'
 
@@ -113,10 +114,76 @@ function isExtension(url: string): boolean {
   return url.startsWith('chrome-extension://')
 }
 
+interface AppLinkRequest {
+  externalURL?: string
+  isMainFrame?: boolean
+}
+
+/** Pages with a question on screen, and questions just declined: a page cannot stack or repeat them. */
+const asking = new Set<number>()
+const declined = new Map<string, number>()
+const DECLINE_QUIET_MS = 8000
+
+/** Which app on this computer opens such a link ('' if none does). */
+function appFor(link: string, scheme: string): string {
+  for (const candidate of [link, `${scheme}://`]) {
+    try {
+      const name = app.getApplicationNameForProtocol(candidate)
+      if (name) return name.replace(/\.app$/i, '')
+    } catch {
+      // not a link the system can look up
+    }
+  }
+  return ''
+}
+
+/**
+ * A page wants to open another app. Never without asking: the question names
+ * the site, the app and the link, and "Always" is remembered for that site and
+ * that kind of link only.
+ */
+async function askAppLink(wc: WebContents | null, partition: string, requester: string, details: AppLinkRequest): Promise<boolean> {
+  const link = details.externalURL ?? ''
+  const scheme = appLinkScheme(link)
+  // Only the page you are looking at may ask, not something embedded in it.
+  if (!wc || !scheme || details.isMainFrame === false) return false
+  const origin = originOf(requester)
+  if (!/^(https?|chrome-extension):\/\//.test(origin)) return false
+  const appName = appFor(link, scheme)
+  if (!appName) return false // nothing here opens such links
+
+  const permission = appLinkPermission(scheme)
+  const key = keyOf(partition, origin, permission)
+  if (decisions.get(key) === true) return true
+  if (asking.has(wc.id) || (declined.get(key) ?? 0) > Date.now()) return false
+
+  asking.add(wc.id)
+  try {
+    const win = BrowserWindow.fromWebContents(wc) ?? BrowserWindow.getFocusedWindow()
+    const options: Electron.MessageBoxOptions = {
+      type: 'question',
+      buttons: ['Open', `Always Open ${appName} from This Site`, 'Cancel'],
+      // Return and Escape both cancel: a page cannot time this under your typing.
+      defaultId: 2,
+      cancelId: 2,
+      message: `${hostOf(origin)} wants to open ${appName}`,
+      detail: `${showAppLink(link)}\n\nOnly continue if you asked for this, for example by clicking a meeting or email link.`,
+    }
+    const { response } = win ? await dialog.showMessageBox(win, options) : await dialog.showMessageBox(options)
+    if (response === 1) remember(partition, origin, permission, true)
+    if (response === 2) declined.set(key, Date.now() + DECLINE_QUIET_MS)
+    return response === 0 || response === 1
+  } finally {
+    asking.delete(wc.id)
+  }
+}
+
 export function installPermissionHandlers(ses: Session, partition: string, persist = true): void {
   if (!persist) ephemeral.add(partition)
   ses.setPermissionRequestHandler(async (wc, permission, callback, details) => {
     const url = details.requestingUrl || wc.getURL()
+    // A link that opens another app (Zoom, Slack, Mail …) has its own question.
+    if (permission === APP_LINK_PERMISSION) return void askAppLink(wc, partition, url, details as AppLinkRequest).then(callback, () => callback(false))
     if (ALWAYS_ALLOW.has(permission) || isExtension(url)) return callback(true)
     const what = ASK[permission]
     if (!what) return callback(false)

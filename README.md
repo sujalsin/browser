@@ -296,8 +296,13 @@ trust** (unexpected email links, shady streaming or download sites).
 - **Broken or forged certificates are refused**; there is no "proceed anyway".
 - **Permissions are asked per site** (camera, microphone, location, notifications, clipboard,
   screen recording, display layout) and remembered; everything not on that list is refused.
-- **Links that open other apps** (`zoommtg:`, `slack:`, `mailto:` …) are refused when they come
-  from a page, and links handed over by other apps are only opened if they are web addresses.
+- **Links that open other apps** (`zoommtg:`, `slack:`, `mailto:`, `msteams:` …) never open
+  silently. The browser asks first, naming the site, the app and the link, and Return or Escape
+  cancel. *Always Open* is remembered for that site and that kind of link only (reset it in
+  Settings → Site Permissions). Links that would connect the Mac to a file server or another
+  computer (`smb:`, `afp:`, `vnc:`, `ssh:` …) or open local help pages and scripts are refused
+  outright, as is anything asked for by content embedded in a page.
+- **Links handed over by other apps** are only opened if they are web addresses.
 - **Extensions**: only from the Chrome Web Store, and adding one first shows what it will be able
   to read. Private windows run without extensions.
 - **Saved passwords** are stored encrypted with a key in the macOS keychain, filled in only after

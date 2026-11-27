@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { normalizeDomain } from '../../shared/boosts'
 import { SPACE_COLORS } from '../../shared/constants'
+import { appLinkLabel } from '../../shared/app-links'
 import { engineUpdateDue } from '../../shared/engine'
 import { LANGUAGES } from '../../shared/translate'
 import type { AppInfo, Boost, DownloadInfo, HistoryItem, LibraryTab, LoginsOverview, SearchEngineId, SitePermission, TaskInfo, UIState } from '../../shared/types'
@@ -593,7 +594,7 @@ function SettingsView({ state }: { state: UIState }) {
               {perms.map((p) => (
                 <div key={`${p.partition}|${p.origin}|${p.permission}`} className="set-list-row">
                   <span className="perm-site">{displayHost(p.origin)}</span>
-                  <span className="perm-what">{PERMISSION_NAMES[p.permission] ?? p.permission}</span>
+                  <span className="perm-what">{PERMISSION_NAMES[p.permission] ?? appLinkLabel(p.permission) ?? p.permission}</span>
                   <span className={`perm-state ${p.allowed ? 'allowed' : 'blocked'}`}>{p.allowed ? 'Allowed' : 'Blocked'}</span>
                   {new Set(state.spaces.map((sp) => sp.partition)).size > 1 && <span className="perm-profile">{profileName(p.partition)}</span>}
                   <button
